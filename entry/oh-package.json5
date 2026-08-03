@@ -1,0 +1,9 @@
+{
+  "name": "entry",
+  "version": "1.0.0",
+  "description": "Zhihu++ HarmonyOS NEXT entry module",
+  "main": "",
+  "author": "xlwreally",
+  "license": "AGPL-3.0-or-later",
+  "dependencies": {}
+}

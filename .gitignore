@@ -1,0 +1,19 @@
+.idea
+.hvigor
+.preview
+build
+oh_modules
+local.properties
+*.swp
+entry/src/main/resources/rawfile/debug/local_debug_session.json
+
+# 签名密钥（严禁提交）
+*.p12
+*.p7b
+*.csr
+# AI 工具本地中间产物
+.omx/
+# 本地构建/工具日志
+*.log
+# 根目录临时文本（飞书推送/构建日志等），不递归子目录
+/*.txt

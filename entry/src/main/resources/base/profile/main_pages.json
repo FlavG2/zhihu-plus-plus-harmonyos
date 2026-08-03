@@ -1,0 +1,28 @@
+{
+  "src": [
+    "pages/Index",
+    "pages/Login",
+    "pages/Search",
+    "pages/WebContent",
+    "pages/Article",
+    "pages/Question",
+    "pages/CollectionList",
+    "pages/CollectionDetail",
+    "pages/VideoPlayerPage",
+    "pages/QrLogin",
+    "pages/People",
+    "pages/Pin",
+    "pages/Notification",
+    "pages/NotificationSettings",
+    "pages/FilterSettings",
+    "pages/AppearanceSettings",
+    "pages/BlocklistManage",
+    "pages/BlockHistory",
+    "pages/QualityFilterSettings",
+    "pages/SmartFilterSettings",
+    "pages/History",
+    "pages/IdentityManagement",
+    "pages/About",
+    "pages/Licenses"
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#F3F7FB"
+    },
+    {
+      "name": "page_background",
+      "value": "#F5F7FB"
+    },
+    {
+      "name": "text_primary",
+      "value": "#111827"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#6B7280"
+    },
+    {
+      "name": "text_tertiary",
+      "value": "#94A3B8"
+    },
+    {
+      "name": "card_background",
+      "value": "#FFFFFFFF"
+    },
+    {
+      "name": "answer_card_background",
+      "value": "#F5F8FF"
+    },
+    {
+      "name": "card_border",
+      "value": "#E5ECF3"
+    },
+    {
+      "name": "tab_bar_background",
+      "value": "#8AFFFFFF"
+    },
+    {
+      "name": "tab_bar_border",
+      "value": "#DCE6F0"
+    },
+    {
+      "name": "tab_selected_background",
+      "value": "#CFE2FF"
+    },
+    {
+      "name": "tab_selected_border",
+      "value": "#F8FBFF"
+    },
+    {
+      "name": "tab_selected_text",
+      "value": "#111827"
+    },
+    {
+      "name": "action_background",
+      "value": "#E8F0FF"
+    },
+    {
+      "name": "action_text",
+      "value": "#1D4ED8"
+    },
+    {
+      "name": "error_text",
+      "value": "#B42318"
+    },
+    {
+      "name": "article_bar_background",
+      "value": "#CCFFFFFF"
+    },
+    {
+      "name": "article_bar_border",
+      "value": "#DCE6F0"
+    },
+    {
+      "name": "portal_top_bar_background",
+      "value": "#96FFFFFF"
+    },
+    {
+      "name": "portal_top_bar_border",
+      "value": "#DCE6F0"
+    },
+    {
+      "name": "glass_top_bar_background",
+      "value": "#B3FFFFFF"
+    },
+    {
+      "name": "glass_top_bar_border",
+      "value": "#DCE6F0"
+    },
+    {
+      "name": "action_pill_background",
+      "value": "#B3FFFFFF"
+    },
+    {
+      "name": "action_pill_button_inactive",
+      "value": "#14000000"
+    },
+    {
+      "name": "action_pill_border",
+      "value": "#DCE6F0"
+    },
+    {
+      "name": "action_pill_icon",
+      "value": "#111827"
+    }
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "color": [
+    {
+      "name": "start_window_background",
+      "value": "#10161D"
+    },
+    {
+      "name": "page_background",
+      "value": "#0F141A"
+    },
+    {
+      "name": "text_primary",
+      "value": "#F3F7FD"
+    },
+    {
+      "name": "text_secondary",
+      "value": "#A4B0BF"
+    },
+    {
+      "name": "text_tertiary",
+      "value": "#738195"
+    },
+    {
+      "name": "card_background",
+      "value": "#18212B"
+    },
+    {
+      "name": "answer_card_background",
+      "value": "#1A2332"
+    },
+    {
+      "name": "card_border",
+      "value": "#243242"
+    },
+    {
+      "name": "tab_bar_background",
+      "value": "#6618212B"
+    },
+    {
+      "name": "tab_bar_border",
+      "value": "#243242"
+    },
+    {
+      "name": "tab_selected_background",
+      "value": "#24364A"
+    },
+    {
+      "name": "tab_selected_border",
+      "value": "#35506E"
+    },
+    {
+      "name": "tab_selected_text",
+      "value": "#F3F7FD"
+    },
+    {
+      "name": "action_background",
+      "value": "#203047"
+    },
+    {
+      "name": "action_text",
+      "value": "#A9C7FF"
+    },
+    {
+      "name": "error_text",
+      "value": "#FF8A80"
+    },
+    {
+      "name": "article_bar_background",
+      "value": "#F50B1016"
+    },
+    {
+      "name": "article_bar_border",
+      "value": "#16212C"
+    },
+    {
+      "name": "portal_top_bar_background",
+      "value": "#F50B1016"
+    },
+    {
+      "name": "portal_top_bar_border",
+      "value": "#16212C"
+    },
+    {
+      "name": "glass_top_bar_background",
+      "value": "#C00B1016"
+    },
+    {
+      "name": "glass_top_bar_border",
+      "value": "#16212C"
+    },
+    {
+      "name": "action_pill_background",
+      "value": "#B30B1016"
+    },
+    {
+      "name": "action_pill_button_inactive",
+      "value": "#1AFFFFFF"
+    },
+    {
+      "name": "action_pill_border",
+      "value": "#16212C"
+    },
+    {
+      "name": "action_pill_icon",
+      "value": "#FFFFFF"
+    }
+  ]
+}

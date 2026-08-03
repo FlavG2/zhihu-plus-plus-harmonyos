@@ -1,0 +1,9 @@
+{
+  "modelVersion": "6.1.0",
+  "description": "Zhihu++ HarmonyOS NEXT scaffold",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hamock": "1.0.0",
+    "@ohos/hypium": "1.0.25"
+  }
+}
