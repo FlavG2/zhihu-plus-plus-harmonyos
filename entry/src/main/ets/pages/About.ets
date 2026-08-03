@@ -1,4 +1,5 @@
-import { router, promptAction } from '@kit.ArkUI';
+import { router } from '@kit.ArkUI';
+import common from '@ohos.app.ability.common';
 import { ThemeColors } from '../services/ThemeColors';
 import { APP_VERSION_NAME } from '../generated/BuildInfo';
 
@@ -11,6 +12,19 @@ struct AboutPage {
 
   private openLicenses(): void {
     router.pushUrl({ url: 'pages/Licenses' });
+  }
+
+  /** 用系统浏览器打开外部链接 */
+  private openExternal(url: string): void {
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      ctx.startAbility({
+        action: 'ohos.want.action.viewData',
+        uri: url
+      });
+    } catch (_) {
+      // 系统浏览器不可用时静默忽略
+    }
   }
 
   @Builder
@@ -80,6 +94,9 @@ struct AboutPage {
                 .fontSize(16)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
+              Text('https://github.com/FlavG2/zhihu-plus-plus-harmonyos')
+                .fontSize(13)
+                .fontColor($r('app.color.action_text'))
             }
             .layoutWeight(1)
             .alignItems(HorizontalAlign.Start)
@@ -94,7 +111,7 @@ struct AboutPage {
           .border({ width: 1, color: $r('app.color.card_border') })
           .borderRadius(16)
           .onClick(() => {
-            promptAction.showToast({ message: '项目处于封闭测试阶段，源码暂未开放' });
+            this.openExternal('https://github.com/FlavG2/zhihu-plus-plus-harmonyos');
           })
 
           // 项目协议（不跳转）

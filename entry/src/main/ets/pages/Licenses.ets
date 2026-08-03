@@ -1,4 +1,5 @@
 import { router } from '@kit.ArkUI';
+import common from '@ohos.app.ability.common';
 import { ThemeColors } from '../services/ThemeColors';
 
 @Entry
@@ -52,6 +53,19 @@ struct LicensesPage {
       .margin({ bottom: 8 })
   }
 
+  /** 用系统浏览器打开外部链接 */
+  private openExternal(url: string): void {
+    try {
+      const ctx = getContext(this) as common.UIAbilityContext;
+      ctx.startAbility({
+        action: 'ohos.want.action.viewData',
+        uri: url
+      });
+    } catch (_) {
+      // 系统浏览器不可用时静默忽略
+    }
+  }
+
   build() {
     Column() {
       this.Header()
@@ -61,10 +75,23 @@ struct LicensesPage {
           // 区块一：本应用协议
           Column({ space: 8 }) {
             this.SectionTitle('本应用协议')
-            Text('知乎++（鸿蒙版）基于 AGPL-3.0-only 协议开源。')
+            Text('知乎++（鸿蒙版）基于 AGPL-3.0-only 协议。')
               .fontSize(13)
               .lineHeight(20)
               .fontColor($r('app.color.text_secondary'))
+            Column({ space: 4 }) {
+              Text('· 本项目：FlavG2/zhihu-plus-plus-harmonyos')
+                .fontSize(13)
+                .lineHeight(20)
+                .fontColor($r('app.color.text_secondary'))
+              Text('https://github.com/FlavG2/zhihu-plus-plus-harmonyos')
+                .fontSize(13)
+                .lineHeight(20)
+                .fontColor($r('app.color.action_text'))
+                .onClick(() => this.openExternal('https://github.com/FlavG2/zhihu-plus-plus-harmonyos'))
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
           }
           .width('100%')
           .alignItems(HorizontalAlign.Start)
@@ -85,6 +112,7 @@ struct LicensesPage {
                 .fontSize(13)
                 .lineHeight(20)
                 .fontColor($r('app.color.action_text'))
+                .onClick(() => this.openExternal('https://github.com/zly2006/zhihu-plus-plus'))
             }
             .width('100%')
             .alignItems(HorizontalAlign.Start)
@@ -98,6 +126,7 @@ struct LicensesPage {
                 .fontSize(13)
                 .lineHeight(20)
                 .fontColor($r('app.color.action_text'))
+                .onClick(() => this.openExternal('https://github.com/xlwreally/zhihu-plus-plus-next'))
             }
             .width('100%')
             .alignItems(HorizontalAlign.Start)

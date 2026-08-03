@@ -33,7 +33,7 @@ import {
 } from '../utils/ZhihuHtml';
 import { resolveZhihuThemeMode } from '../utils/ZhihuWebBridge';
 import { ThemeColors } from '../services/ThemeColors';
-import { ZhihuEmojiItem, ZhihuEmojiService } from '../services/ZhihuEmojiService';
+import { ZhihuEmojiItem, EmojiPickerItem, ZhihuEmojiService, CommentContentSegment } from '../services/ZhihuEmojiService';
 import { ZhihuContentTarget, serializeZhihuContentTarget } from '../models/ZhihuContentModels';
 import { resolveZhihuContent } from '../services/ZhihuContentResolver';
 
@@ -248,6 +248,7 @@ struct Pin {
   @State private rootCaret: number = 0;
   @State private childCaret: number = 0;
   @State private emojiCols: number = 7;
+  @State private emojiItems: EmojiPickerItem[] = [];
   private rootInputController: TextInputController = new TextInputController();
   private childInputController: TextInputController = new TextInputController();
 
@@ -297,6 +298,10 @@ struct Pin {
     this.fallbackUrl = fb.length > 0 ? fb : `https://www.zhihu.com/pin/${id}`;
     this.loadPin();
     this.ensureRootComments(true);
+    // 确保知乎贴纸数据就绪，用于表情选择器渲染原版贴纸图
+    ZhihuEmojiService.initialize(this.context())
+      .then(() => { this.emojiItems = ZhihuEmojiService.getEmojiPickerItems(); })
+      .catch(() => {});
     // 通知评论定位：直接进入想法后直接展开评论面板，定位到指定评论
     if (this.anchorCommentId.length > 0) {
       this.showRootCommentSheet = true;
@@ -1322,22 +1327,28 @@ focusControl.requestFocus('rootCommentInput');
 
           Text() {
             ForEach(
-              parseInlineSpans(stripCommentImageLinks(ZhihuEmojiService.replaceText(comment.contentHtml))),
-              (span: InlineSpan) => {
-                if (span.isLink && span.url) {
-                  Span(span.text)
+              ZhihuEmojiService.parseCommentContent(comment.contentHtml),
+              (seg: CommentContentSegment) => {
+                if (seg.kind === 'emoji' && seg.dataUrl !== undefined) {
+                  ImageSpan(seg.dataUrl)
+                    .width(compact ? 16 : 18)
+                    .height(compact ? 16 : 18)
+                    .verticalAlign(ImageSpanAlignment.CENTER)
+                    .margin({ left: 1, right: 1 })
+                } else if (seg.kind === 'link' && seg.url) {
+                  Span(seg.text ?? '')
                     .fontSize(compact ? 13 : 15)
                     .fontColor('#1565C0')
                     .decoration({ type: TextDecorationType.Underline, color: '#1565C0' })
                     .onClick(() => {
-                      this.openCommentLink(span.url!, span.text);
+                      this.openCommentLink(seg.url!, seg.text ?? '');
                     })
                 } else {
-                  Span(span.text)
+                  Span(seg.text ?? '')
                     .fontSize(compact ? 13 : 15)
                 }
               },
-              (span: InlineSpan) => `${span.isLink ? 'link' : 'text'}_${span.text}`
+              (seg: CommentContentSegment) => `${seg.kind}_${seg.text ?? ''}_${seg.url ?? ''}_${seg.alt ?? ''}`
             )
           }
           .width('100%')
@@ -1759,14 +1770,21 @@ focusControl.requestFocus('childCommentInput');
   @Builder
   private EmojiPanel(isChild: boolean): void {
     Grid() {
-      ForEach(ZhihuEmojiService.getEmojiList(), (item: ZhihuEmojiItem) => {
+      ForEach(this.emojiItems, (item: EmojiPickerItem) => {
         GridItem() {
-          Text(item.emoji)
-            .fontSize(28)
-            .textAlign(TextAlign.Center)
-            .width('100%')
-            .height('100%')
-            .maxLines(1)
+          if (item.dataUrl !== undefined) {
+            Image(item.dataUrl)
+              .width(30)
+              .height(30)
+              .objectFit(ImageFit.Contain)
+          } else {
+            Text(item.fallback ?? '')
+              .fontSize(28)
+              .textAlign(TextAlign.Center)
+              .width('100%')
+              .height('100%')
+              .maxLines(1)
+          }
         }
         .width('100%')
         .aspectRatio(1)
@@ -1787,7 +1805,7 @@ focusControl.requestFocus('childCommentInput');
           const controller = isChild ? this.childInputController : this.rootInputController;
           controller.caretPosition(newCaret);
         })
-      }, (item: ZhihuEmojiItem) => item.token)
+      }, (item: EmojiPickerItem) => item.token)
     }
     .columnsTemplate(this.emojiColumnsTemplate())
     .columnsGap(8)

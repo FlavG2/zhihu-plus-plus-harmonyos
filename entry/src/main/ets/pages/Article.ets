@@ -37,7 +37,7 @@ import { CommentService } from '../services/CommentService';
 import { CollectionService } from '../services/CollectionService';
 import { ZhihuSessionRepository } from '../services/ZhihuSessionRepository';
 import { resolveZhihuContent } from '../services/ZhihuContentResolver';
-import { ZhihuEmojiItem, ZhihuEmojiService } from '../services/ZhihuEmojiService';
+import { ZhihuEmojiItem, EmojiPickerItem, ZhihuEmojiService, CommentContentSegment } from '../services/ZhihuEmojiService';
 import { startSummary as startSummaryStream, SummaryOptions } from '../services/SummaryService';
 import { TtsController } from '../services/TtsService';
 import {
@@ -305,6 +305,7 @@ struct Article {
   @State private rootCaret: number = 0;
   @State private childCaret: number = 0;
   @State private emojiCols: number = 7;
+  @State private emojiItems: EmojiPickerItem[] = [];
   private rootInputController: TextInputController = new TextInputController();
   private childInputController: TextInputController = new TextInputController();
   // 评论所属回答的 target.id：确保 rootComments 永远只属于当前 this.detail 指向的回答（修复左右滑动后评论区停在旧回答）
@@ -390,6 +391,10 @@ struct Article {
     const rootTargetValue = this.target !== undefined ? rootContentTarget(this.target) : undefined;
     this.pageTitle = rootTargetValue !== undefined ? contentTargetDisplayTitle(rootTargetValue) : '内容详情';
     this.loadArticle();
+    // 确保知乎贴纸数据就绪，用于表情选择器渲染原版贴纸图（首次异步下载完成后刷新选择器数据源）
+    ZhihuEmojiService.initialize(this.context())
+      .then(() => { this.emojiItems = ZhihuEmojiService.getEmojiPickerItems(); })
+      .catch(() => {});
   }
 
   // 离开页面（系统侧滑返回等）时若处于沉浸，必须还原窗口，避免影响其他页面
@@ -2896,14 +2901,21 @@ struct Article {
   @Builder
   private EmojiPanel(isChild: boolean): void {
     Grid() {
-      ForEach(ZhihuEmojiService.getEmojiList(), (item: ZhihuEmojiItem) => {
+      ForEach(this.emojiItems, (item: EmojiPickerItem) => {
         GridItem() {
-          Text(item.emoji)
-            .fontSize(28)
-            .textAlign(TextAlign.Center)
-            .width('100%')
-            .height('100%')
-            .maxLines(1)
+          if (item.dataUrl !== undefined) {
+            Image(item.dataUrl)
+              .width(30)
+              .height(30)
+              .objectFit(ImageFit.Contain)
+          } else {
+            Text(item.fallback ?? '')
+              .fontSize(28)
+              .textAlign(TextAlign.Center)
+              .width('100%')
+              .height('100%')
+              .maxLines(1)
+          }
         }
         .width('100%')
         .aspectRatio(1)
@@ -2924,7 +2936,7 @@ struct Article {
           const controller = isChild ? this.childInputController : this.rootInputController;
           controller.caretPosition(newCaret);
         })
-      }, (item: ZhihuEmojiItem) => item.token)
+      }, (item: EmojiPickerItem) => item.token)
     }
     .columnsTemplate(this.emojiColumnsTemplate())
     .columnsGap(8)
@@ -3034,22 +3046,28 @@ struct Article {
 
           Text() {
             ForEach(
-              parseInlineSpans(stripCommentImageLinks(ZhihuEmojiService.replaceText(comment.contentHtml))),
-              (span: InlineSpan) => {
-                if (span.isLink && span.url) {
-                  Span(span.text)
+              ZhihuEmojiService.parseCommentContent(comment.contentHtml),
+              (seg: CommentContentSegment) => {
+                if (seg.kind === 'emoji' && seg.dataUrl !== undefined) {
+                  ImageSpan(seg.dataUrl)
+                    .width(compact ? 16 : 18)
+                    .height(compact ? 16 : 18)
+                    .verticalAlign(ImageSpanAlignment.CENTER)
+                    .margin({ left: 1, right: 1 })
+                } else if (seg.kind === 'link' && seg.url) {
+                  Span(seg.text ?? '')
                     .fontSize(compact ? 13 : 15)
                     .fontColor('#1565C0')
                     .decoration({ type: TextDecorationType.Underline, color: '#1565C0' })
                     .onClick(() => {
-                      this.openCommentLink(span.url!, span.text);
+                      this.openCommentLink(seg.url!, seg.text ?? '');
                     })
                 } else {
-                  Span(span.text)
+                  Span(seg.text ?? '')
                     .fontSize(compact ? 13 : 15)
                 }
               },
-              (span: InlineSpan) => `${span.isLink ? 'link' : 'text'}_${span.text}`
+              (seg: CommentContentSegment) => `${seg.kind}_${seg.text ?? ''}_${seg.url ?? ''}_${seg.alt ?? ''}`
             )
           }
           .width('100%')

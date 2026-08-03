@@ -1,6 +1,6 @@
 import common from '@ohos.app.ability.common';
 import { preferences } from '@kit.ArkData';
-import { escapeHtml } from '../utils/ZhihuHtml';
+import { escapeHtml, stripCommentImageLinks, stripHtmlToText } from '../utils/ZhihuHtml';
 import { ZhihuApi } from './ZhihuApi';
 
 type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
@@ -24,10 +24,31 @@ export interface ZhihuEmojiItem {
   emoji: string;
 }
 
+export interface ZhihuEmojiSticker {
+  placeholder: string;
+  dataUrl: string;
+}
+
+export interface EmojiPickerItem {
+  readonly token: string;
+  readonly dataUrl?: string;
+  readonly fallback?: string;
+}
+
+/** 评论正文的结构化分段：纯文本 / 超链接 / 知乎贴纸图（内联渲染用）。 */
+export interface CommentContentSegment {
+  readonly kind: 'text' | 'link' | 'emoji';
+  readonly text?: string;       // text / link 显示文字；emoji 段可省略
+  readonly url?: string;        // link 跳转地址
+  readonly dataUrl?: string;    // emoji 贴纸图（base64 data URI）
+  readonly alt?: string;        // emoji 占位符 token 名
+}
+
 const EMOJI_API_URL: string = 'https://www.zhihu.com/api/v4/sticker-groups/1114161698310770688';
 const EMOJI_PREFERENCES_FILE: string = 'zhihu_emoji';
 const EMOJI_CACHE_KEY: string = 'emoji_mapping';
 const EMOJI_CACHE_VERSION_KEY: string = 'emoji_cache_version';
+const EMOJI_CACHE_ORDER_KEY: string = 'emoji_cache_order';
 const CURRENT_EMOJI_CACHE_VERSION: string = '1';
 
 const COMMENT_EMOJI_EXACT: Record<string, string> = {
@@ -171,6 +192,7 @@ const NATIVE_EMOJI_CANDIDATES: NativeEmojiCandidate[] = [
 export class ZhihuEmojiService {
   private static initialized: boolean = false;
   private static stickerMapping: Record<string, string> = {};
+  private static stickerList: ZhihuEmojiSticker[] = [];
 
   private static stringValue(value: JsonValue | undefined): string {
     return typeof value === 'string' ? value : '';
@@ -190,14 +212,24 @@ export class ZhihuEmojiService {
     });
   }
 
+  /** 归一化占位符：去掉知乎 API 返回的占位符自带的方括号（如 "[哇]" -> "哇"）。 */
+  private static normalizePlaceholder(raw: string): string {
+    const trimmed = raw.trim();
+    const m = /^\[(.+)\]$/.exec(trimmed);
+    return (m ? m[1] : trimmed).trim();
+  }
+
   private static sanitizeStickerMapping(raw: Object | undefined): Record<string, string> {
     if (raw === undefined || raw === null || typeof raw !== 'object') {
       return {};
     }
     const mapping: Record<string, string> = {};
     Object.entries(raw as Record<string, Object>).forEach(([placeholder, dataUrl]: [string, Object]) => {
-      if (typeof dataUrl === 'string' && placeholder.trim().length > 0 && dataUrl.startsWith('data:image/')) {
-        mapping[placeholder.trim()] = dataUrl;
+      if (typeof dataUrl === 'string' && dataUrl.startsWith('data:image/')) {
+        const key = this.normalizePlaceholder(placeholder);
+        if (key.length > 0) {
+          mapping[key] = dataUrl;
+        }
       }
     });
     return mapping;
@@ -212,36 +244,47 @@ export class ZhihuEmojiService {
     }
     try {
       this.stickerMapping = this.sanitizeStickerMapping(JSON.parse(encoded) as Object);
-      return Object.keys(this.stickerMapping).length > 0;
+      const orderRaw = store.getSync(EMOJI_CACHE_ORDER_KEY, '[]') as string;
+      const order = JSON.parse(orderRaw) as string[];
+      this.stickerList = order
+        .map((p: string) => this.normalizePlaceholder(p))
+        .filter((p: string) => typeof this.stickerMapping[p] === 'string')
+        .map((p: string) => ({ placeholder: p, dataUrl: this.stickerMapping[p] }));
+      return this.stickerList.length > 0;
     } catch (_) {
       this.stickerMapping = {};
+      this.stickerList = [];
       return false;
     }
   }
 
-  private static saveToCache(context: common.Context, mapping: Record<string, string>): void {
+  private static saveToCache(context: common.Context, mapping: Record<string, string>, list: ZhihuEmojiSticker[]): void {
     const store = this.preferences(context);
     store.putSync(EMOJI_CACHE_KEY, JSON.stringify(mapping));
+    store.putSync(EMOJI_CACHE_ORDER_KEY, JSON.stringify(list.map((i: ZhihuEmojiSticker) => i.placeholder)));
     store.putSync(EMOJI_CACHE_VERSION_KEY, CURRENT_EMOJI_CACHE_VERSION);
     store.flushSync();
   }
 
-  private static async downloadStickerMapping(): Promise<Record<string, string>> {
+  private static async downloadStickerMapping(): Promise<ZhihuEmojiSticker[]> {
     const payload = await ZhihuApi.getJson(EMOJI_API_URL);
     if (payload === null) {
-      return {};
+      return [];
     }
     const stickers = this.arrayValue(this.objectValue(payload.data).stickers);
     const mapping: Record<string, string> = {};
+    const list: ZhihuEmojiSticker[] = [];
     stickers.forEach((item: JsonValue) => {
       const sticker = this.objectValue(item);
-      const placeholder = this.stringValue(sticker.placeholder).trim();
+      const placeholder = this.normalizePlaceholder(this.stringValue(sticker.placeholder));
       const dataUrl = this.stringValue(sticker.static_image_url);
       if (placeholder.length > 0 && dataUrl.startsWith('data:image/')) {
         mapping[placeholder] = dataUrl;
+        list.push({ placeholder, dataUrl });
       }
     });
-    return mapping;
+    this.stickerMapping = mapping;
+    return list;
   }
 
   private static nativeEmojiMatchScore(token: string, candidate: NativeEmojiCandidate): number {
@@ -322,14 +365,17 @@ export class ZhihuEmojiService {
       return;
     }
     try {
-      const mapping = await this.downloadStickerMapping();
-      this.stickerMapping = mapping;
-      if (Object.keys(mapping).length > 0) {
-        this.saveToCache(context, mapping);
+      const list = await this.downloadStickerMapping();
+      this.stickerList = list;
+      if (list.length > 0) {
+        const mapping: Record<string, string> = {};
+        list.forEach((i: ZhihuEmojiSticker) => { mapping[i.placeholder] = i.dataUrl; });
+        this.saveToCache(context, mapping, list);
       }
     } catch (_) {
       if (!this.loadFromCache(context, true)) {
         this.stickerMapping = {};
+        this.stickerList = [];
       }
     } finally {
       this.initialized = true;
@@ -352,5 +398,101 @@ export class ZhihuEmojiService {
 
   static getEmojiList(): ZhihuEmojiItem[] {
     return Object.entries(COMMENT_EMOJI_EXACT).map(([token, emoji]: [string, string]) => ({ token, emoji }));
+  }
+
+  static getStickerList(): ZhihuEmojiSticker[] {
+    return this.stickerList;
+  }
+
+  static isStickerReady(): boolean {
+    return this.stickerList.length > 0;
+  }
+
+  /** 评论输入框表情选择器的数据源：贴纸就绪返回知乎贴纸图，否则降级到 Unicode 静态表。 */
+  static getEmojiPickerItems(): EmojiPickerItem[] {
+    if (this.stickerList.length > 0) {
+      return this.stickerList.map((s: ZhihuEmojiSticker) => ({ token: s.placeholder, dataUrl: s.dataUrl }));
+    }
+    return Object.entries(COMMENT_EMOJI_EXACT).map(([token, emoji]: [string, string]) => ({ token, fallback: emoji }));
+  }
+
+  /**
+   * 解析评论正文 HTML 为结构化分段，供 ArkUI 以 Text{Span / ImageSpan} 内联渲染。
+   * 关键修复：贴纸 `[token]` 命中 stickerMapping 时输出 emoji 段（ImageSpan 渲染贴纸图），
+   * 否则降级到 Unicode 表情；不再像旧 replaceText(preferSticker=false) 那样原样输出 [token]。
+   */
+  static parseCommentContent(html: string): CommentContentSegment[] {
+    const segments: CommentContentSegment[] = [];
+    if (typeof html !== 'string' || html.length === 0) {
+      return segments;
+    }
+    const cleaned = stripCommentImageLinks(html);
+    const linkRegex = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = linkRegex.exec(cleaned)) !== null) {
+      if (match.index > lastIndex) {
+        this.appendPlainSegments(segments, cleaned.substring(lastIndex, match.index));
+      }
+      const linkUrl = match[1];
+      const linkText = this.tokenTextToPlain(stripHtmlToText(match[2]));
+      if (linkText.length > 0) {
+        segments.push({ kind: 'link', text: linkText, url: linkUrl });
+      }
+      lastIndex = linkRegex.lastIndex;
+    }
+    if (lastIndex < cleaned.length) {
+      this.appendPlainSegments(segments, cleaned.substring(lastIndex));
+    }
+    return segments;
+  }
+
+  private static tokenTextToPlain(text: string): string {
+    return text.replace(/\[([^\[\]]+)\]/g, (_m: string, token: string): string => {
+      const normalized = token.trim();
+      if (normalized.length === 0) {
+        return _m;
+      }
+      const dataUrl = this.stickerMapping[normalized];
+      if (typeof dataUrl === 'string' && dataUrl.length > 0) {
+        return normalized;
+      }
+      return this.resolveNativeEmoji(normalized) ?? normalized;
+    });
+  }
+
+  private static appendPlainSegments(segments: CommentContentSegment[], htmlFragment: string): void {
+    const plain = stripHtmlToText(htmlFragment);
+    if (plain.length === 0) {
+      return;
+    }
+    const tokenRegex = /\[([^\[\]]+)\]/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = tokenRegex.exec(plain)) !== null) {
+      if (match.index > lastIndex) {
+        const piece = plain.substring(lastIndex, match.index);
+        if (piece.length > 0) {
+          segments.push({ kind: 'text', text: piece });
+        }
+      }
+      const token = match[1].trim();
+      if (token.length > 0) {
+        const dataUrl = this.stickerMapping[token];
+        if (typeof dataUrl === 'string' && dataUrl.length > 0) {
+          segments.push({ kind: 'emoji', dataUrl, alt: token });
+        } else {
+          const fallback = this.resolveNativeEmoji(token) ?? token;
+          segments.push({ kind: 'text', text: fallback });
+        }
+      }
+      lastIndex = tokenRegex.lastIndex;
+    }
+    if (lastIndex < plain.length) {
+      const tail = plain.substring(lastIndex);
+      if (tail.length > 0) {
+        segments.push({ kind: 'text', text: tail });
+      }
+    }
   }
 }
