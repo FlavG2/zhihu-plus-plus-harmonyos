@@ -168,8 +168,7 @@ Copyright (C) 2026 FlavG2 — 知乎++（鸿蒙版）移植与维护
 - 安卓原项目：[zly2006/zhihu-plus-plus](https://github.com/zly2006/zhihu-plus-plus)
 - 鸿蒙基底项目：[xlwreally/zhihu-plus-plus-next](https://github.com/xlwreally/zhihu-plus-plus-next)（Commit 86db2b6）
 
-系统 Kit 随 HarmonyOS 操作系统分发，非应用再分发。本项目当前处于封闭测试阶段，源码暂未开放。
-
+系统 Kit 随 HarmonyOS 操作系统分发，非应用再分发。
 ### 免责声明（Warranty Disclaimer）
 
 本程序按「原样」提供，**不提供任何明示或暗示的担保**，包括但不限于对适销性和特定用途适用性的暗示担保。全部使用风险由您承担。若程序被证明存在缺陷，您须自行承担所有必要的维护、修理或更正费用。
