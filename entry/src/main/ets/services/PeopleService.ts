@@ -354,7 +354,8 @@ export class PeopleService {
   }
 
   // ---- 内容条目 → HomeFeedItem 通用映射（回答/文章/问题/想法）----
-  private static mapContentTarget(target: JsonObject, actionText: string): HomeFeedItem | undefined {
+  // 公开供 TopicService 等复用（话题信息流与用户主页信息流结构一致）。
+  static mapContentTarget(target: JsonObject, actionText: string): HomeFeedItem | undefined {
     const targetType = this.str(target.type);
     const author = this.obj(target.author);
     const question = this.obj(target.question);

@@ -43,9 +43,7 @@ struct AboutPage {
     .width('100%')
     .height(56)
     .alignItems(VerticalAlign.Center)
-    .padding({ top: this.topSafeAreaVp })
     .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }
 
   build() {
@@ -205,6 +203,7 @@ struct AboutPage {
     }
     .width('100%')
     .height('100%')
+    .padding({ top: this.topSafeAreaVp })
     .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }

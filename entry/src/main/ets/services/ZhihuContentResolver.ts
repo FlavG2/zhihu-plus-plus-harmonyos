@@ -224,5 +224,37 @@ export function resolveZhihuContent(url: string): ZhihuCommentableTarget | undef
     };
   }
 
+  // 私信会话（对齐安卓 NavDestination：https://www.zhihu.com/inbox/{peerId}?title=）
+  // 安卓通知主页 data 项里私信会话的 targetLink 即此形态，解析后跳原生 PrivateMessage 页
+  match = normalized.match(/^https?:\/\/(?:www\.)?zhihu\.com\/inbox\/([^/?#]+)/i);
+  if (match !== null) {
+    const name = extractQueryParam(normalized, 'title');
+    return {
+      kind: 'message',
+      peerId: match[1],
+      name: name,
+      id: match[1],
+      title: name
+    };
+  }
+
+  return undefined;
+}
+
+// 话题深链：zhihu://topic/{id} 与 https://www.zhihu.com/topic/{id}
+// 返回话题 id；由调用方路由到原生 Topic 页面（ZhihuCommentableTarget 不含 topic 类型）。
+export function resolveZhihuTopic(url: string): string | undefined {
+  const normalized = trimQueryAndHash(url.trim());
+  if (normalized.length === 0) {
+    return undefined;
+  }
+  const zhihuMatch = normalized.match(/^zhihu:\/\/topic\/(\d+)$/i);
+  if (zhihuMatch !== null) {
+    return zhihuMatch[1];
+  }
+  const httpsMatch = normalized.match(/^https?:\/\/(?:www\.)?zhihu\.com\/topic\/(\d+)$/i);
+  if (httpsMatch !== null) {
+    return httpsMatch[1];
+  }
   return undefined;
 }

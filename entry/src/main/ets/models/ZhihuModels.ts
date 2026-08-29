@@ -42,7 +42,7 @@ export interface HomeFeedTopic {
 
 export interface HomeFeedItem {
   readonly id: string;
-  readonly type: 'answer' | 'article' | 'question' | 'pin' | 'zvideo';
+  readonly type: 'answer' | 'article' | 'question' | 'pin' | 'zvideo' | 'message';
   readonly title: string;
   readonly summary: string;
   readonly details: string;
@@ -135,4 +135,39 @@ export function createDefaultSessionData(): ZhihuSessionData {
     cookies: {},
     userAgent: DEFAULT_USER_AGENT
   };
+}
+
+// 话题详情（对齐安卓 TopicScreen.TopicDetail：api/v5.1/topics/{id} 返回值）
+export interface TopicDetail {
+  readonly id: string;
+  readonly name: string;
+  readonly excerpt: string;
+  readonly avatarUrl: string;
+  readonly followersCount: number;
+  readonly questionsCount: number;
+  readonly isFollowing: boolean;
+  readonly topicId: string;
+  readonly totalPv: number;
+  readonly discussCount: number;
+}
+
+// 搜索「话题」分类结果（对齐安卓 SearchEntity.Topic / TopicSearchObject）
+export interface SearchTopicResult {
+  readonly id: string;
+  readonly name: string;
+  readonly avatarUrl: string;
+  readonly excerpt: string;
+  readonly visitCount: number;
+  readonly discussCount: number;
+  readonly isFollowing: boolean;
+}
+
+// 搜索「用户」分类结果（对齐安卓 SearchEntity.Person / DataHolder.People）
+export interface SearchPeopleResult {
+  readonly id: string;
+  readonly name: string;
+  readonly avatarUrl: string;
+  readonly headline: string;
+  readonly followerCount: number;
+  readonly urlToken: string;
 }

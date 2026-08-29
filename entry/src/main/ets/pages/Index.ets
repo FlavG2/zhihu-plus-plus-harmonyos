@@ -12,7 +12,7 @@ import { DEFAULT_SESSION_SNAPSHOT, HomeFeedItem, HomeFeedTopic, SessionSnapshot 
 import { HomeFeedService } from '../services/HomeFeedService';
 import { HotListService } from '../services/HotListService';
 import { LocalDebugSessionService } from '../services/LocalDebugSessionService';
-import { resolveZhihuContent } from '../services/ZhihuContentResolver';
+import { resolveZhihuContent, resolveZhihuTopic } from '../services/ZhihuContentResolver';
 import { openZhihuContentTarget } from '../services/ZhihuNavigation';
 import { ZhihuSessionRepository } from '../services/ZhihuSessionRepository';
 import { AppearanceSettingsRepository, APPEARANCE_KEYS, AppearanceThemeMode, AmbientBlurIntensity,
@@ -275,8 +275,13 @@ struct Index {
     if (!link || link.length === 0) {
       return;
     }
-    const target = resolveZhihuContent(link);
+    const topicId = resolveZhihuTopic(link);
     this.pendingDeepLink = ''; // 先清空，避免 pushUrl 重入/二次跳转
+    if (topicId !== undefined) {
+      router.pushUrl({ url: 'pages/Topic', params: { topicId } });
+      return;
+    }
+    const target = resolveZhihuContent(link);
     if (target !== undefined) {
       openZhihuContentTarget(target);
     }

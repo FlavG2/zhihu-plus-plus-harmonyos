@@ -1,6 +1,6 @@
 import common from '@ohos.app.ability.common';
 import { ZhihuApi } from './ZhihuApi';
-import { ZhihuNotification, ZhihuNotificationPage, ZhihuNotificationCategory } from '../models/ZhihuNotificationModels';
+import { ZhihuNotification, ZhihuNotificationPage, ZhihuNotificationCategory, ZhihuNotificationInvitation, ZhihuNotificationOverview } from '../models/ZhihuNotificationModels';
 import { stripHtmlToText } from '../utils/ZhihuHtml';
 
 type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
@@ -51,6 +51,50 @@ const DETAIL_TITLE_TO_KEY: Record<string, string> = {
 };
 
 export class NotificationService {
+  // 通知主页概览（安卓 NotificationViewModel，请求 /notifications/v3/message/v3）
+  // 返回分类未读数 + 邀请回答入口 + 来源会话列表
+  static async loadMessageOverview(context: common.Context, nextUrl?: string): Promise<ZhihuNotificationOverview> {
+    const url = nextUrl !== undefined && nextUrl.length > 0
+      ? nextUrl
+      : MOBILE_NOTIFICATION_MESSAGE_URL;
+    const payload = (await ZhihuApi.getJson(context, url, { signed: false })) as JsonObject | null;
+    if (payload === null) {
+      return { items: [], nextUrl: '', isEnd: true, unreadCounts: {} };
+    }
+    const data = Array.isArray(payload.data) ? (payload.data as JsonValue[]) : [];
+    const items: ZhihuNotification[] = data
+      .filter((d): d is JsonObject => d !== null && typeof d === 'object' && !Array.isArray(d))
+      .filter((raw) => str((raw as JsonObject).type).length > 0 && str((raw as JsonObject).type) !== 'empty')
+      .map((raw) => NotificationService.mapNotification(raw));
+    const paging = asObj(payload.paging as JsonValue);
+    let nextUrlResult = '';
+    let isEnd = true;
+    if (paging !== undefined) {
+      nextUrlResult = str(paging.next);
+      isEnd = typeof paging.is_end === 'boolean' ? paging.is_end : nextUrlResult.length === 0;
+    }
+    // 邀请回答入口：安卓 page.columnHead.firstOrNull()（MobileNotificationColumnHead）。
+    // 注意：安卓入口写死始终渲染，column_head 为空也显示（内部走兜底），故此处 invitation 可能为空，UI 层负责兜底。
+    const columnHead = Array.isArray(payload.column_head) ? (payload.column_head as JsonValue[]) : [];
+    const invitation = NotificationService.mapInvitation(columnHead[0]);
+    // 分类未读数：安卓 head 数组按 detailTitle 映射
+    const unreadCounts: Record<string, number> = {};
+    const head = Array.isArray(payload.head) ? (payload.head as JsonValue[]) : [];
+    for (const entry of head) {
+      const e = asObj(entry);
+      if (e === undefined) {
+        continue;
+      }
+      const title = str(e.detail_title);
+      const key = DETAIL_TITLE_TO_KEY[title];
+      if (key !== undefined) {
+        unreadCounts[key] = num(e.unread_count);
+      }
+    }
+    return { items, nextUrl: nextUrlResult, isEnd, invitation, unreadCounts };
+  }
+
+  // 分类详情时间线（安卓 NotificationTimelineViewModel，请求 /notifications/v3/timeline/entry/{entryName}）
   static async loadNotifications(context: common.Context, categoryKey: string, nextUrl?: string): Promise<ZhihuNotificationPage> {
     const url = nextUrl !== undefined && nextUrl.length > 0
       ? nextUrl
@@ -62,6 +106,7 @@ export class NotificationService {
     const data = Array.isArray(payload.data) ? (payload.data as JsonValue[]) : [];
     const items: ZhihuNotification[] = data
       .filter((d): d is JsonObject => d !== null && typeof d === 'object' && !Array.isArray(d))
+      .filter((raw) => str((raw as JsonObject).type).length > 0 && str((raw as JsonObject).type) !== 'empty')
       .map((raw) => NotificationService.mapNotification(raw));
     const paging = asObj(payload.paging as JsonValue);
     let nextUrlResult = '';
@@ -73,27 +118,39 @@ export class NotificationService {
     return { items, nextUrl: nextUrlResult, isEnd };
   }
 
-  // 未读消息概览（安卓 updateUnreadCounts）
-  static async loadUnreadCounts(context: common.Context): Promise<Record<string, number>> {
-    const result: Record<string, number> = {};
-    try {
-      const payload = (await ZhihuApi.getJson(context, MOBILE_NOTIFICATION_MESSAGE_URL, { signed: true })) as JsonObject | null;
-      const head = payload !== null ? (Array.isArray(payload.head) ? (payload.head as JsonValue[]) : []) : [];
-      for (const entry of head) {
-        const e = asObj(entry);
-        if (e === undefined) {
-          continue;
-        }
-        const title = str(e.detail_title);
-        const key = DETAIL_TITLE_TO_KEY[title];
-        if (key !== undefined) {
-          result[key] = num(e.unread_count);
-        }
-      }
-    } catch (e) {
-      // 忽略，保持 UI 稳定
+  // 邀请回答入口（对齐安卓 MobileNotificationColumnHead）
+  // 安卓显示用 textPrefix + text 拼接；头像回退链 avatar_urls[0].url -> images[0] -> avatar_url -> 默认图标。
+  // 放宽校验：只要 column_head 首项是合法 object 就显示（title 空 fallback「邀请回答」），
+  // 避免接口个别字段为空时被误杀导致入口丢失。
+  private static mapInvitation(raw: JsonValue | undefined): ZhihuNotificationInvitation | undefined {
+    const o = asObj(raw);
+    if (o === undefined) {
+      return undefined;
     }
-    return result;
+    // 头像回退链
+    const avatarUrls = Array.isArray(o.avatar_urls) ? (o.avatar_urls as JsonValue[]) : [];
+    const firstAvatarUrl = avatarUrls.length > 0 ? str((avatarUrls[0] as JsonObject)?.url) : '';
+    const images = Array.isArray(o.images) ? (o.images as JsonValue[]) : [];
+    const firstImage = images.length > 0 ? str(images[0]) : '';
+    const avatarUrl: string = firstAvatarUrl || firstImage || str(o.avatar_url) || '';
+    // text 拼接 text_prefix + text（安卓 textPrefix + text）
+    const textPrefix = str(o.text_prefix ?? o.textPrefix);
+    const textBody = str(o.text);
+    const text = `${textPrefix}${textBody}`.trim();
+    const title = str(o.title).length > 0 ? str(o.title) : '邀请回答';
+    const targetLink = str(o.target_link ?? o.targetLink);
+    let unreadCount = num(o.unread_count);
+    if (unreadCount <= 0) {
+      unreadCount = num(o.badge_count);
+    }
+    return {
+      id: str(o.id),
+      title,
+      text,
+      targetLink,
+      avatarUrl,
+      unreadCount
+    };
   }
 
   private static mapNotification(raw: JsonObject): ZhihuNotification {
@@ -192,7 +249,8 @@ export class NotificationService {
       headTargetLink,
       anchorTargetLink,
       targetType: target !== undefined ? str(target.type) : '',
-      targetId: target !== undefined ? str(target.id) : ''
+      targetId: target !== undefined ? str(target.id) : '',
+      unreadCount: num(raw.unread_count)
     };
   }
 

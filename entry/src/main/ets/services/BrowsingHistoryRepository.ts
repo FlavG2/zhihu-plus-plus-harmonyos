@@ -51,7 +51,7 @@ export class BrowsingHistoryRepository {
     };
   }
 
-  private static targetType(target: ZhihuCommentableTarget | undefined): 'answer' | 'article' | 'question' | 'pin' {
+  private static targetType(target: ZhihuCommentableTarget | undefined): 'answer' | 'article' | 'question' | 'pin' | 'message' {
     return target?.kind ?? 'article';
   }
 

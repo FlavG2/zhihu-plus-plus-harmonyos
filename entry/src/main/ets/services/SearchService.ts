@@ -1,5 +1,5 @@
 import common from '@ohos.app.ability.common';
-import { HomeFeedPage } from '../models/ZhihuModels';
+import { HomeFeedPage, SearchPeopleResult, SearchTopicResult } from '../models/ZhihuModels';
 import { HomeFeedService } from './HomeFeedService';
 import { ZhihuApi } from './ZhihuApi';
 
@@ -29,6 +29,27 @@ export class SearchService {
 
   private static arrayValue(value: JsonValue | undefined): JsonValue[] {
     return Array.isArray(value) ? value : [];
+  }
+
+  private static idValue(value: JsonValue | undefined): string {
+    if (typeof value === 'number') {
+      return `${value}`;
+    }
+    if (typeof value === 'string') {
+      return value;
+    }
+    return '';
+  }
+
+  private static numberValue(value: JsonValue | undefined): number {
+    if (typeof value === 'number') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    return 0;
   }
 
   // 内容类型 vertical 参数：回答/文章走服务端 vertical，问题无对应 vertical 故客户端过滤（传空）
@@ -115,4 +136,108 @@ export class SearchService {
     }
     return HomeFeedService.mapSearchPage(payload as JsonObject);
   }
+
+  // ---- 实体搜索（用户 / 话题），对齐安卓 SearchViewModel.SearchTab.People / Topic ----
+  private static entitySearchUrl(query: string, type: 'people' | 'topic', nextUrl?: string): string {
+    if (nextUrl !== undefined && nextUrl.length > 0) {
+      return nextUrl;
+    }
+    const encodedQuery = encodeURIComponent(query);
+    const params: string[] = [
+      `t=${type}`,
+      `q=${encodedQuery}`,
+      `correction=1`,
+      `offset=0`,
+      `limit=10`
+    ];
+    return `https://www.zhihu.com/api/v4/search_v3?${params.join('&')}`;
+  }
+
+  private static parseEntityPaging(payload: JsonObject): { nextUrl: string; isEnd: boolean } {
+    const paging = this.objectValue(payload.paging);
+    const next = this.stringValue(paging.next);
+    return {
+      nextUrl: next.startsWith('http') ? next : (next.length > 0 ? `https://www.zhihu.com${next.startsWith('/') ? '' : '/'}${next}` : ''),
+      isEnd: paging.is_end === true
+    };
+  }
+
+  static async searchPeople(
+    context: common.Context,
+    query: string,
+    nextUrl?: string
+  ): Promise<SearchEntityPage<SearchPeopleResult>> {
+    const url = this.entitySearchUrl(query, 'people', nextUrl);
+    const requestUrl = url.includes('include=') ? url : `${url}&include=${encodeURIComponent(this.SEARCH_INCLUDE)}`;
+    const payload = await ZhihuApi.getJson(context, requestUrl, { signed: true });
+    if (payload === null) {
+      throw new Error('用户搜索结果为空');
+    }
+    const root = payload as JsonObject;
+    const items = this.arrayValue(root.data)
+      .map((raw: JsonValue): SearchPeopleResult | undefined => {
+        const entry = this.objectValue(raw);
+        if (entry.type !== 'search_result') {
+          return undefined;
+        }
+        const o = this.objectValue(entry.object);
+        if (this.stringValue(o.type) !== 'people') {
+          return undefined;
+        }
+        return {
+          id: this.idValue(o.id),
+          name: this.stringValue(o.name).replace(/<em>/g, '').replace(/<\/em>/g, ''),
+          avatarUrl: this.stringValue(o.avatar_url),
+          headline: this.stringValue(o.headline).replace(/<em>/g, '').replace(/<\/em>/g, ''),
+          followerCount: this.numberValue(o.follower_count),
+          urlToken: this.stringValue(o.url_token)
+        };
+      })
+      .filter((it): it is SearchPeopleResult => it !== undefined && it.id.length > 0);
+    const paging = this.parseEntityPaging(root);
+    return { items, nextUrl: paging.nextUrl, isEnd: paging.isEnd };
+  }
+
+  static async searchTopics(
+    context: common.Context,
+    query: string,
+    nextUrl?: string
+  ): Promise<SearchEntityPage<SearchTopicResult>> {
+    const url = this.entitySearchUrl(query, 'topic', nextUrl);
+    const requestUrl = url.includes('include=') ? url : `${url}&include=${encodeURIComponent(this.SEARCH_INCLUDE)}`;
+    const payload = await ZhihuApi.getJson(context, requestUrl, { signed: true });
+    if (payload === null) {
+      throw new Error('话题搜索结果为空');
+    }
+    const root = payload as JsonObject;
+    const items = this.arrayValue(root.data)
+      .map((raw: JsonValue): SearchTopicResult | undefined => {
+        const entry = this.objectValue(raw);
+        if (entry.type !== 'search_result') {
+          return undefined;
+        }
+        const o = this.objectValue(entry.object);
+        if (this.stringValue(o.type) !== 'topic') {
+          return undefined;
+        }
+        return {
+          id: this.idValue(o.id),
+          name: this.stringValue(o.name).replace(/<em>/g, '').replace(/<\/em>/g, ''),
+          avatarUrl: this.stringValue(o.avatar_url),
+          excerpt: this.stringValue(o.excerpt).replace(/<em>/g, '').replace(/<\/em>/g, ''),
+          visitCount: this.numberValue(o.visit_count),
+          discussCount: this.numberValue(o.top_answer_count),
+          isFollowing: o.is_following === true
+        };
+      })
+      .filter((it): it is SearchTopicResult => it !== undefined && it.id.length > 0);
+    const paging = this.parseEntityPaging(root);
+    return { items, nextUrl: paging.nextUrl, isEnd: paging.isEnd };
+  }
+}
+
+export interface SearchEntityPage<T> {
+  readonly items: T[];
+  readonly nextUrl: string;
+  readonly isEnd: boolean;
 }

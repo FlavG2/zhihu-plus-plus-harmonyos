@@ -1,4 +1,4 @@
-export type ZhihuContentKind = 'answer' | 'article' | 'question' | 'pin' | 'comment';
+export type ZhihuContentKind = 'answer' | 'article' | 'question' | 'pin' | 'comment' | 'message';
 export type ZhihuVoteState = 'up' | 'down' | 'neutral' | 'none';
 export type CommentSortOrder = 'score' | 'time';
 
@@ -31,11 +31,25 @@ export interface ZhihuPinTarget {
   readonly anchorCommentId?: string;
 }
 
+// 私信会话（对齐安卓 NavDestination.Notification.Message）：zhihu.com/inbox/{peerId}?title=
+// 注：私信会话不是"可评论内容"，但为兼容 ZhihuCommentableTarget 联合里大量已有 .id/.title 访问，
+// 这里让 id/title 必填（id 复用 peerId、title 复用 name），anchorCommentId 不需要故省略。
+// 实际 message 分支在 openNotification 里读 peerId/name，不依赖 .id/.title。
+export interface ZhihuMessageTarget {
+  readonly kind: 'message';
+  readonly peerId: string;
+  readonly name?: string;
+  readonly id: string;
+  readonly title: string;
+  readonly anchorCommentId?: string;
+}
+
 export type ZhihuCommentableTarget =
   | ZhihuAnswerTarget
   | ZhihuArticleTarget
   | ZhihuQuestionTarget
-  | ZhihuPinTarget;
+  | ZhihuPinTarget
+  | ZhihuMessageTarget;
 
 export interface ZhihuCommentTarget {
   readonly kind: 'comment';

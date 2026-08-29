@@ -897,7 +897,21 @@ export class HomeFeedService {
     return this.mapPage(payload as JsonObject);
   }
 
-  // 混合推荐：web 与安卓端结果交错合并、按 id 去重（web 的 paging 作为后续翻页依据）
+  // 混合推荐去重 key：优先用内容实体（nativeTarget）而非原始 id。
+  // 原因：web 端 id 形如 answer:123，安卓端为 android:answer:123，直接用 it.id 永远对不上，导致同一条内容被双推。
+  // 两端对同一篇内容解析出的 nativeTarget（kind+id）一致，用它去重即可去重且保留各自独有内容。
+  private static dedupeKey(it: HomeFeedItem): string {
+    const nt = it.nativeTarget;
+    if (nt !== undefined && nt.id.length > 0) {
+      return `${nt.kind}:${nt.id}`;
+    }
+    if (it.targetUrl.length > 0) {
+      return `url:${it.targetUrl}`;
+    }
+    return it.id;
+  }
+
+  // 混合推荐：web 与安卓端结果交错合并、按内容实体去重（web 的 paging 作为后续翻页依据）
   private static mergePages(a: HomeFeedPage, b: HomeFeedPage): HomeFeedPage {
     const seen = new Set<string>();
     const items: HomeFeedItem[] = [];
@@ -907,15 +921,17 @@ export class HomeFeedService {
     for (let i = 0; i < max; i++) {
       if (i < aItems.length) {
         const it = aItems[i];
-        if (!seen.has(it.id)) {
-          seen.add(it.id);
+        const key = this.dedupeKey(it);
+        if (!seen.has(key)) {
+          seen.add(key);
           items.push(it);
         }
       }
       if (i < bItems.length) {
         const it = bItems[i];
-        if (!seen.has(it.id)) {
-          seen.add(it.id);
+        const key = this.dedupeKey(it);
+        if (!seen.has(key)) {
+          seen.add(key);
           items.push(it);
         }
       }

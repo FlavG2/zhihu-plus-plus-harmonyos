@@ -517,10 +517,14 @@ struct People {
       return;
     }
     const target = !this.profile.isFollowing;
+    // 乐观更新：先立即翻转按钮状态，避免点了没反应
+    this.patchProfile({ isFollowing: target });
     try {
       const result = await PeopleService.toggleFollow(this.context(), this.profile.urlToken, target);
       this.patchProfile({ isFollowing: result.isFollowing, followerCount: result.followerCount });
     } catch (error) {
+      // 失败回滚
+      this.patchProfile({ isFollowing: !target });
       this.showToast(`操作失败：${errMsg(error)}`);
     }
   }
@@ -532,10 +536,15 @@ struct People {
       return;
     }
     const target = !this.profile.isBlocking;
+    const wasFollowing = this.profile.isFollowing;
+    // 乐观更新：先立即翻转按钮状态，避免点了没反应
+    this.patchProfile({ isBlocking: target, isFollowing: target ? false : wasFollowing });
     try {
       const result = await PeopleService.toggleBlock(this.context(), this.profile.urlToken, target);
-      this.patchProfile({ isBlocking: result.isBlocking });
+      this.patchProfile({ isBlocking: result.isBlocking, isFollowing: target ? false : wasFollowing });
     } catch (error) {
+      // 失败回滚
+      this.patchProfile({ isBlocking: !target, isFollowing: wasFollowing });
       this.showToast(`操作失败：${errMsg(error)}`);
     }
   }
@@ -1112,20 +1121,20 @@ struct People {
       }
       .width('100%').alignItems(HorizontalAlign.Center).padding({ top: 40, bottom: 40 })
     } else if (this.profile !== null) {
-      this.ProfileBody(this.profile)
+      this.ProfileBody()
     }
   }
 
   @Builder
-  private ProfileBody(profile: ZhihuPeopleProfile): void {
+  private ProfileBody(): void {
     Column({ space: 12 }) {
       Row({ space: 16 }) {
-        if (profile.avatarUrl.length > 0) {
-          Image(profile.avatarUrl)
+        if (this.profile!.avatarUrl.length > 0) {
+          Image(this.profile!.avatarUrl)
             .width(80).height(80).objectFit(ImageFit.Cover).borderRadius(40).clip(true)
         } else {
           Column() {
-            Text(profile.name.slice(0, 1))
+            Text(this.profile!.name.slice(0, 1))
               .fontSize(28).fontWeight(FontWeight.Bold).fontColor($r('app.color.action_text'))
           }
           .width(80).height(80).justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
@@ -1134,11 +1143,11 @@ struct People {
 
         Column({ space: 6 }) {
           Row({ space: 6 }) {
-            Text(profile.name)
+            Text(this.profile!.name)
               .fontSize(20).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
               .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
-            if (profile.officialBadgeTitle.length > 0) {
-              Text(profile.officialBadgeTitle)
+            if (this.profile!.officialBadgeTitle.length > 0) {
+              Text(this.profile!.officialBadgeTitle)
                 .fontSize(11).fontColor($r('app.color.action_text'))
                 .padding({ left: 8, right: 8, top: 2, bottom: 2 })
                 .backgroundColor($r('app.color.action_background')).borderRadius(10)
@@ -1147,13 +1156,13 @@ struct People {
           }
           .width('100%').alignItems(VerticalAlign.Center)
 
-          if (profile.headline.length > 0) {
-            Text(profile.headline)
+          if (this.profile!.headline.length > 0) {
+            Text(this.profile!.headline)
               .fontSize(13).fontColor($r('app.color.text_secondary'))
               .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
           }
 
-          ForEach(profile.officialBadgeDetails, (badge: OfficialBadgeDetail) => {
+          ForEach(this.profile!.officialBadgeDetails, (badge: OfficialBadgeDetail) => {
             Row({ space: 6 }) {
               if (badge.iconUrl.length > 0) {
                 Image(badge.iconUrl).width(16).height(16).objectFit(ImageFit.Contain)
@@ -1165,19 +1174,19 @@ struct People {
             .width('100%').alignItems(VerticalAlign.Center)
           }, (badge: OfficialBadgeDetail) => badge.title + badge.description)
 
-          if (profile.githubSocial !== undefined) {
+          if (this.profile!.githubSocial !== undefined) {
             Row({ space: 4 }) {
-              if (profile.githubSocial.iconUrl.length > 0) {
-                Image(profile.githubSocial.iconUrl).width(16).height(16).objectFit(ImageFit.Contain)
+              if (this.profile!.githubSocial.iconUrl.length > 0) {
+                Image(this.profile!.githubSocial.iconUrl).width(16).height(16).objectFit(ImageFit.Contain)
               }
-              Text(profile.githubSocial.title)
+              Text(this.profile!.githubSocial.title)
                 .fontSize(12).fontColor($r('app.color.text_secondary')).maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
-              Text(`· ${profile.githubSocial.starCount} stars`)
+              Text(`· ${this.profile!.githubSocial.starCount} stars`)
                 .fontSize(12).fontColor($r('app.color.text_secondary')).maxLines(1)
             }
             .width('100%').alignItems(VerticalAlign.Center)
-            .onClick(() => { this.openWeb(profile.githubSocial!.title, profile.githubSocial!.profileUrl); })
+            .onClick(() => { this.openWeb(this.profile!.githubSocial!.title, this.profile!.githubSocial!.profileUrl); })
           }
         }
         .layoutWeight(1).alignItems(HorizontalAlign.Start)
@@ -1189,7 +1198,7 @@ struct People {
           .onClick(() => {
             router.pushUrl({
               url: 'pages/Search',
-              params: { scopeMemberHashId: profile.id, scopeMemberName: profile.name }
+              params: { scopeMemberHashId: this.profile!.id, scopeMemberName: this.profile!.name }
             });
           })
       }
@@ -1197,10 +1206,10 @@ struct People {
 
       // 统计行
       Row({ space: 8 }) {
-        this.StatItem('回答', profile.answerCount, 0)
-        this.StatItem('文章', profile.articleCount, 1)
-        this.StatItem('粉丝', profile.followerCount, 7)
-        this.StatItem('关注', profile.followingCount, 8)
+        this.StatItem('回答', this.profile!.answerCount, 0)
+        this.StatItem('文章', this.profile!.articleCount, 1)
+        this.StatItem('粉丝', this.profile!.followerCount, 7)
+        this.StatItem('关注', this.profile!.followingCount, 8)
       }
       .width('100%')
       .padding({ top: 8 })
@@ -1209,21 +1218,21 @@ struct People {
       if (!this.isSelf) {
         Flex({ wrap: FlexWrap.Wrap, space: { main: LengthMetrics.vp(10), cross: LengthMetrics.vp(10) } }) {
           // 关注：蓝胶囊=可关注，灰胶囊=已关注（中性，明确区分）
-          Text(profile.isFollowing ? '已关注' : '关注')
+          Text(this.profile!.isFollowing ? '已关注' : '关注')
             .fontSize(14)
-            .fontColor(profile.isFollowing ? $r('app.color.text_secondary') : $r('app.color.action_text'))
+            .fontColor(this.profile!.isFollowing ? $r('app.color.text_secondary') : $r('app.color.action_text'))
             .padding({ left: 18, right: 18, top: 8, bottom: 8 })
-            .backgroundColor(profile.isFollowing ? ThemeColors.cardBackground(this.oledBlack, this.isDark) : $r('app.color.action_background'))
-            .border({ width: 1, color: profile.isFollowing ? $r('app.color.card_border') : $r('app.color.action_background') })
+            .backgroundColor(this.profile!.isFollowing ? ThemeColors.cardBackground(this.oledBlack, this.isDark) : $r('app.color.action_background'))
+            .border({ width: 1, color: this.profile!.isFollowing ? $r('app.color.card_border') : $r('app.color.action_background') })
             .borderRadius(18)
             .onClick(() => { this.doToggleFollow(); })
           // 拉黑：红=已拉黑，灰描边=未拉黑
-          Text(profile.isBlocking ? '已拉黑' : '拉黑')
+          Text(this.profile!.isBlocking ? '已拉黑' : '拉黑')
             .fontSize(14)
-            .fontColor(profile.isBlocking ? '#E24B4A' : $r('app.color.text_secondary'))
+            .fontColor(this.profile!.isBlocking ? '#E24B4A' : $r('app.color.text_secondary'))
             .padding({ left: 18, right: 18, top: 8, bottom: 8 })
-            .backgroundColor(profile.isBlocking ? '#FCEBEB' : ThemeColors.cardBackground(this.oledBlack, this.isDark))
-            .border({ width: 1, color: profile.isBlocking ? '#E24B4A' : $r('app.color.card_border') })
+            .backgroundColor(this.profile!.isBlocking ? '#FCEBEB' : ThemeColors.cardBackground(this.oledBlack, this.isDark))
+            .border({ width: 1, color: this.profile!.isBlocking ? '#E24B4A' : $r('app.color.card_border') })
             .borderRadius(18)
             .onClick(() => { this.doToggleBlock(); })
           // 屏蔽推荐（本地，对齐安卓 isUserBlocked）

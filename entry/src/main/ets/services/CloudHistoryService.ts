@@ -213,7 +213,7 @@ export class CloudHistoryService {
         const action = d.action;
 
         // 确定 type
-        let feedType: 'answer' | 'article' | 'question' | 'pin' = 'article';
+        let feedType: 'answer' | 'article' | 'question' | 'pin' | 'message' = 'article';
         if (extra.contentType === 'answer') {
           feedType = 'answer';
         } else if (extra.contentType === 'article') {

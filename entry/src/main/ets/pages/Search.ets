@@ -1,13 +1,13 @@
 import common from '@ohos.app.ability.common';
 import { promptAction, router } from '@kit.ArkUI';
 import { serializeZhihuContentTarget, ZhihuCommentableTarget } from '../models/ZhihuContentModels';
-import { DEFAULT_SESSION_SNAPSHOT, HomeFeedItem, SessionSnapshot, TextHighlightSegment } from '../models/ZhihuModels';
+import { DEFAULT_SESSION_SNAPSHOT, HomeFeedItem, SearchPeopleResult, SearchTopicResult, SessionSnapshot, TextHighlightSegment } from '../models/ZhihuModels';
 import { BrowsingHistoryRepository } from '../services/BrowsingHistoryRepository';
 import { CloudHistoryService } from '../services/CloudHistoryService';
 import { HotSearchItem, SearchService } from '../services/SearchService';
 import { ThemeColors } from '../services/ThemeColors';
 import { resolveZhihuContent } from '../services/ZhihuContentResolver';
-import { openZhihuContentTarget } from '../services/ZhihuNavigation';
+import { openZhihuContentTarget, openZhihuTopic } from '../services/ZhihuNavigation';
 import { pasteboard } from '@kit.BasicServicesKit';
 import { preferences } from '@kit.ArkData';
 
@@ -51,6 +51,20 @@ struct SearchPage {
   @StorageLink('showSearchHotSearch') private showSearchHotSearch: boolean = true;
   @State private historyMenuExpanded: boolean = false;
   @State private refreshing: boolean = false;
+  // 搜索分类 Tab（对齐安卓 SearchTab：全站 / 用户 / 话题）
+  @State private searchTab: 'general' | 'people' | 'topic' = 'general';
+  @State private peopleItems: SearchPeopleResult[] = [];
+  @State private topicItems: SearchTopicResult[] = [];
+  @State private peopleNextUrl: string = '';
+  @State private topicNextUrl: string = '';
+  @State private peopleIsEnd: boolean = false;
+  @State private topicIsEnd: boolean = false;
+  @State private peopleLoading: boolean = false;
+  @State private topicLoading: boolean = false;
+  @State private peopleLoadingMore: boolean = false;
+  @State private topicLoadingMore: boolean = false;
+  @State private peopleError: string = '';
+  @State private topicError: string = '';
 
   aboutToAppear(): void {
     const rawParams = router.getParams();
@@ -154,19 +168,29 @@ struct SearchPage {
     }
     this.queryInput = nextQuery;
     this.searchQuery = nextQuery;
-    this.resultItems = [];
-    this.resultNextUrl = '';
-    this.resultError = '';
     // 记录搜索历史（仅非成员搜索且开启历史开关时）
-    if (this.scopeMemberHashId.length === 0 && this.showSearchHistory) {
+    if (this.scopeMemberHashId.length === 0 && this.showSearchHistory && this.searchTab === 'general') {
       this.addSearchHistory(nextQuery);
     }
     this.hasSearched = true;
+    if (this.searchTab === 'people') {
+      await this.doSearchPeople(false);
+    } else if (this.searchTab === 'topic') {
+      await this.doSearchTopics(false);
+    } else {
+      await this.doSearchGeneral();
+    }
+  }
+
+  private async doSearchGeneral(): Promise<void> {
+    this.resultItems = [];
+    this.resultNextUrl = '';
+    this.resultError = '';
     this.resultLoading = true;
     try {
       const page = await SearchService.searchFirstPage(
         this.context(),
-        nextQuery,
+        this.searchQuery,
         this.scopeMemberHashId,
         this.sortValue,
         this.apiContentType(),
@@ -179,6 +203,54 @@ struct SearchPage {
       this.resultError = `搜索失败：${message}`;
     } finally {
       this.resultLoading = false;
+    }
+  }
+
+  private async doSearchPeople(loadMore: boolean): Promise<void> {
+    if (!loadMore && this.peopleLoading) {
+      return;
+    }
+    if (loadMore && (this.peopleIsEnd || this.peopleLoadingMore || this.peopleNextUrl.length === 0)) {
+      return;
+    }
+    this.peopleLoading = !loadMore;
+    this.peopleLoadingMore = loadMore;
+    try {
+      const page = await SearchService.searchPeople(this.context(), this.searchQuery, loadMore ? this.peopleNextUrl : undefined);
+      this.peopleItems = loadMore ? [...this.peopleItems, ...page.items] : page.items;
+      this.peopleNextUrl = page.nextUrl;
+      this.peopleIsEnd = page.isEnd;
+      this.peopleError = '';
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误';
+      this.peopleError = `用户搜索失败：${message}`;
+    } finally {
+      this.peopleLoading = false;
+      this.peopleLoadingMore = false;
+    }
+  }
+
+  private async doSearchTopics(loadMore: boolean): Promise<void> {
+    if (!loadMore && this.topicLoading) {
+      return;
+    }
+    if (loadMore && (this.topicIsEnd || this.topicLoadingMore || this.topicNextUrl.length === 0)) {
+      return;
+    }
+    this.topicLoading = !loadMore;
+    this.topicLoadingMore = loadMore;
+    try {
+      const page = await SearchService.searchTopics(this.context(), this.searchQuery, loadMore ? this.topicNextUrl : undefined);
+      this.topicItems = loadMore ? [...this.topicItems, ...page.items] : page.items;
+      this.topicNextUrl = page.nextUrl;
+      this.topicIsEnd = page.isEnd;
+      this.topicError = '';
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误';
+      this.topicError = `话题搜索失败：${message}`;
+    } finally {
+      this.topicLoading = false;
+      this.topicLoadingMore = false;
     }
   }
 
@@ -389,7 +461,14 @@ struct SearchPage {
   }
 
   private handleScrollEdge(side: Edge): void {
-    if (side === Edge.Bottom && this.hasSearched && this.resultItems.length > 0 && this.resultNextUrl.length > 0) {
+    if (side !== Edge.Bottom || !this.hasSearched) {
+      return;
+    }
+    if (this.searchTab === 'people' && this.peopleItems.length > 0 && this.peopleNextUrl.length > 0) {
+      this.doSearchPeople(true);
+    } else if (this.searchTab === 'topic' && this.topicItems.length > 0 && this.topicNextUrl.length > 0) {
+      this.doSearchTopics(true);
+    } else if (this.searchTab === 'general' && this.resultItems.length > 0 && this.resultNextUrl.length > 0) {
       this.loadMoreResults();
     }
   }
@@ -493,18 +572,18 @@ struct SearchPage {
       .border({ width: 1, color: $r('app.color.card_border') })
       .borderRadius(22)
 
-      Text(this.hasSearched ? '筛选' : '搜索')
+      Text(this.hasSearched && this.searchTab === 'general' ? '筛选' : '搜索')
         .fontSize(14)
         .fontWeight(FontWeight.Medium)
         .fontColor(
-          this.hasSearched
+          this.hasSearched && this.searchTab === 'general'
             ? (this.showFilterBar ? $r('app.color.action_text') : $r('app.color.text_primary'))
             : (this.queryInput.trim().length > 0 ? $r('app.color.action_text') : $r('app.color.text_tertiary'))
         )
         .padding({ left: 6, right: 6, top: 9, bottom: 9 })
-        .enabled(this.hasSearched || this.queryInput.trim().length > 0)
+        .enabled(this.hasSearched && this.searchTab === 'general' ? true : this.queryInput.trim().length > 0)
         .onClick(() => {
-          if (this.hasSearched) {
+          if (this.hasSearched && this.searchTab === 'general') {
             this.showFilterBar = !this.showFilterBar;
           } else {
             this.submitSearch();
@@ -1006,18 +1085,257 @@ struct SearchPage {
     .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
   }
 
+  // ===== 搜索分类 Tab（全站 / 用户 / 话题）=====
+  private onSearchTabChanged(tab: 'general' | 'people' | 'topic'): void {
+    if (this.searchTab === tab) {
+      return;
+    }
+    this.searchTab = tab;
+    if (this.queryInput.trim().length > 0) {
+      this.submitSearch(this.queryInput.trim());
+    } else {
+      this.resultItems = [];
+      this.peopleItems = [];
+      this.topicItems = [];
+      this.resultNextUrl = '';
+      this.peopleNextUrl = '';
+      this.topicNextUrl = '';
+      this.resultError = '';
+      this.peopleError = '';
+      this.topicError = '';
+      this.resultLoading = false;
+      this.peopleLoading = false;
+      this.topicLoading = false;
+      this.hasSearched = false;
+    }
+  }
+
+  @Builder
+  private SearchTabBar(): void {
+    Row({ space: 8 }) {
+      Text('全站')
+        .fontSize(15)
+        .fontWeight(this.searchTab === 'general' ? FontWeight.Bold : FontWeight.Normal)
+        .fontColor(this.searchTab === 'general' ? $r('app.color.action_text') : $r('app.color.text_secondary'))
+        .padding({ left: 18, right: 18, top: 8, bottom: 8 })
+        .backgroundColor(this.searchTab === 'general' ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
+        .borderRadius(18)
+        .onClick(() => { this.onSearchTabChanged('general'); })
+
+      Text('用户')
+        .fontSize(15)
+        .fontWeight(this.searchTab === 'people' ? FontWeight.Bold : FontWeight.Normal)
+        .fontColor(this.searchTab === 'people' ? $r('app.color.action_text') : $r('app.color.text_secondary'))
+        .padding({ left: 18, right: 18, top: 8, bottom: 8 })
+        .backgroundColor(this.searchTab === 'people' ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
+        .borderRadius(18)
+        .onClick(() => { this.onSearchTabChanged('people'); })
+
+      Text('话题')
+        .fontSize(15)
+        .fontWeight(this.searchTab === 'topic' ? FontWeight.Bold : FontWeight.Normal)
+        .fontColor(this.searchTab === 'topic' ? $r('app.color.action_text') : $r('app.color.text_secondary'))
+        .padding({ left: 18, right: 18, top: 8, bottom: 8 })
+        .backgroundColor(this.searchTab === 'topic' ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
+        .borderRadius(18)
+        .onClick(() => { this.onSearchTabChanged('topic'); })
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.Center)
+    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+  }
+
+  @Builder
+  private PersonResultCard(person: SearchPeopleResult): void {
+    Row({ space: 12 }) {
+      if (person.avatarUrl.length > 0) {
+        Image(person.avatarUrl)
+          .width(44).height(44).objectFit(ImageFit.Cover).borderRadius(22).clip(true)
+      } else {
+        Column() {
+          Text(person.name.slice(0, 1))
+            .fontSize(16).fontWeight(FontWeight.Bold).fontColor($r('app.color.action_text'))
+        }
+        .width(44).height(44).justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
+        .backgroundColor($r('app.color.action_background')).borderRadius(22)
+      }
+
+      Column({ space: 4 }) {
+        Text(person.name)
+          .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
+          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+        if (person.headline.length > 0) {
+          Text(person.headline)
+            .fontSize(13).fontColor($r('app.color.text_secondary'))
+            .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        Text(`${person.followerCount} 粉丝`)
+          .fontSize(12).fontColor($r('app.color.text_secondary'))
+      }
+      .layoutWeight(1).alignItems(HorizontalAlign.Start)
+    }
+    .width('100%').padding(16).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+    .border({ width: 1, color: $r('app.color.card_border') }).borderRadius(16)
+    .onClick(() => {
+      const token = person.urlToken.length > 0 ? person.urlToken : person.id;
+      router.pushUrl({ url: 'pages/People', params: { urlToken: token } });
+    })
+  }
+
+  @Builder
+  private TopicResultCard(topic: SearchTopicResult): void {
+    Row({ space: 12 }) {
+      if (topic.avatarUrl.length > 0) {
+        Image(topic.avatarUrl)
+          .width(44).height(44).objectFit(ImageFit.Cover).borderRadius(22).clip(true)
+      } else {
+        Column() {
+          Text(topic.name.slice(0, 1))
+            .fontSize(16).fontWeight(FontWeight.Bold).fontColor($r('app.color.action_text'))
+        }
+        .width(44).height(44).justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
+        .backgroundColor($r('app.color.action_background')).borderRadius(22)
+      }
+
+      Column({ space: 4 }) {
+        Text(topic.name)
+          .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
+          .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
+        if (topic.excerpt.length > 0) {
+          Text(topic.excerpt)
+            .fontSize(13).fontColor($r('app.color.text_secondary'))
+            .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+        Text(`${topic.discussCount} 讨论 · ${topic.visitCount} 浏览`)
+          .fontSize(12).fontColor($r('app.color.text_secondary'))
+      }
+      .layoutWeight(1).alignItems(HorizontalAlign.Start)
+    }
+    .width('100%').padding(16).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+    .border({ width: 1, color: $r('app.color.card_border') }).borderRadius(16)
+    .onClick(() => {
+      openZhihuTopic(topic.id, topic.name);
+    })
+  }
+
+  @Builder
+  private PeopleResultsList(): void {
+    Column() {
+      if (this.peopleLoading && this.peopleItems.length === 0) {
+        Text('正在搜索用户...')
+          .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_secondary'))
+          .width('100%').textAlign(TextAlign.Center).padding({ top: 96 })
+      } else if (this.peopleError.length > 0 && this.peopleItems.length === 0) {
+        Column({ space: 12 }) {
+          Text(this.peopleError).fontSize(15).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
+          Text('重新搜索')
+            .fontSize(14).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
+            .padding({ left: 18, right: 18, top: 10, bottom: 10 })
+            .backgroundColor($r('app.color.action_background')).borderRadius(18)
+            .onClick(() => { this.doSearchPeople(false); })
+        }
+        .alignItems(HorizontalAlign.Center).justifyContent(FlexAlign.Center)
+        .width('100%').padding({ top: 96, left: 24, right: 24 })
+      } else if (this.peopleItems.length === 0) {
+        Text('未找到相关用户')
+          .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_secondary'))
+          .width('100%').textAlign(TextAlign.Center).padding({ top: 96 })
+      } else {
+        ForEach(this.peopleItems, (p: SearchPeopleResult) => {
+          this.PersonResultCard(p);
+        }, (p: SearchPeopleResult) => p.id)
+        if (this.peopleError.length > 0) {
+          Text(this.peopleError)
+            .fontSize(12).fontColor($r('app.color.error_text'))
+            .padding({ left: 18, right: 18, top: 0, bottom: 10 })
+        }
+        Text(this.peopleNextUrl.length === 0 ? '已经到底了' : (this.peopleLoadingMore ? '正在加载更多...' : '加载更多'))
+          .fontSize(14).fontWeight(FontWeight.Medium)
+          .fontColor(
+            this.peopleNextUrl.length === 0 || this.peopleLoadingMore
+              ? $r('app.color.text_tertiary')
+              : $r('app.color.action_text')
+          )
+          .padding({ left: 18, right: 18, top: 12, bottom: 12 })
+          .margin({ top: 4, bottom: 20 })
+          .backgroundColor($r('app.color.action_background'))
+          .borderRadius(18)
+          .enabled(this.peopleNextUrl.length > 0 && !this.peopleLoadingMore)
+          .onClick(() => { this.doSearchPeople(true); })
+      }
+    }
+    .width('100%')
+  }
+
+  @Builder
+  private TopicResultsList(): void {
+    Column() {
+      if (this.topicLoading && this.topicItems.length === 0) {
+        Text('正在搜索话题...')
+          .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_secondary'))
+          .width('100%').textAlign(TextAlign.Center).padding({ top: 96 })
+      } else if (this.topicError.length > 0 && this.topicItems.length === 0) {
+        Column({ space: 12 }) {
+          Text(this.topicError).fontSize(15).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
+          Text('重新搜索')
+            .fontSize(14).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
+            .padding({ left: 18, right: 18, top: 10, bottom: 10 })
+            .backgroundColor($r('app.color.action_background')).borderRadius(18)
+            .onClick(() => { this.doSearchTopics(false); })
+        }
+        .alignItems(HorizontalAlign.Center).justifyContent(FlexAlign.Center)
+        .width('100%').padding({ top: 96, left: 24, right: 24 })
+      } else if (this.topicItems.length === 0) {
+        Text('未找到相关话题')
+          .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_secondary'))
+          .width('100%').textAlign(TextAlign.Center).padding({ top: 96 })
+      } else {
+        ForEach(this.topicItems, (t: SearchTopicResult) => {
+          this.TopicResultCard(t);
+        }, (t: SearchTopicResult) => t.id)
+        if (this.topicError.length > 0) {
+          Text(this.topicError)
+            .fontSize(12).fontColor($r('app.color.error_text'))
+            .padding({ left: 18, right: 18, top: 0, bottom: 10 })
+        }
+        Text(this.topicNextUrl.length === 0 ? '已经到底了' : (this.topicLoadingMore ? '正在加载更多...' : '加载更多'))
+          .fontSize(14).fontWeight(FontWeight.Medium)
+          .fontColor(
+            this.topicNextUrl.length === 0 || this.topicLoadingMore
+              ? $r('app.color.text_tertiary')
+              : $r('app.color.action_text')
+          )
+          .padding({ left: 18, right: 18, top: 12, bottom: 12 })
+          .margin({ top: 4, bottom: 20 })
+          .backgroundColor($r('app.color.action_background'))
+          .borderRadius(18)
+          .enabled(this.topicNextUrl.length > 0 && !this.topicLoadingMore)
+          .onClick(() => { this.doSearchTopics(true); })
+      }
+    }
+    .width('100%')
+  }
+
   build() {
     Column() {
       this.SearchTopBar();
 
-      if (this.hasSearched && this.showFilterBar) {
+      if (this.hasSearched) {
+        this.SearchTabBar();
+      }
+
+      if (this.hasSearched && this.searchTab === 'general' && this.showFilterBar) {
         this.FilterBar();
       }
 
       Refresh({ refreshing: $$this.refreshing }) {
         Scroll() {
           Column() {
-            if (this.hasSearched) {
+            if (this.searchTab === 'people' && this.hasSearched) {
+              this.PeopleResultsList();
+            } else if (this.searchTab === 'topic' && this.hasSearched) {
+              this.TopicResultsList();
+            } else if (this.hasSearched) {
               this.ResultsList();
             } else if (this.scopeMemberHashId.length > 0) {
               Column({ space: 8 }) {

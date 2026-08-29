@@ -36,3 +36,14 @@ export function openZhihuContentTarget(
     }
   }).catch(() => {});
 }
+
+// 话题深链/搜索话题结果跳转：路由到原生 Topic 页面。
+export function openZhihuTopic(topicId: string, topicName: string = ''): void {
+  if (topicId.length === 0) {
+    return;
+  }
+  router.pushUrl({
+    url: 'pages/Topic',
+    params: { topicId, topicName }
+  }).catch(() => {});
+}

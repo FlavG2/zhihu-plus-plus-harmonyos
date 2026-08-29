@@ -1,7 +1,7 @@
 import { router, promptAction } from '@kit.ArkUI';
 import common from '@ohos.app.ability.common';
 import { NotificationService, NOTIFICATION_CATEGORIES } from '../services/NotificationService';
-import { ZhihuNotification, ZhihuNotificationCategory } from '../models/ZhihuNotificationModels';
+import { ZhihuNotification, ZhihuNotificationCategory, ZhihuNotificationInvitation } from '../models/ZhihuNotificationModels';
 import { resolveZhihuContent } from '../services/ZhihuContentResolver';
 import { serializeZhihuContentTarget, ZhihuCommentableTarget } from '../models/ZhihuContentModels';
 import { ThemeColors } from '../services/ThemeColors';
@@ -10,7 +10,6 @@ import { ThemeColors } from '../services/ThemeColors';
 @Component
 struct NotificationPage {
   @State private categories: ZhihuNotificationCategory[] = NOTIFICATION_CATEGORIES;
-  @State private selectedCategory: number = 0;
   @State private items: ZhihuNotification[] = [];
   @State private nextUrl: string = '';
   @State private isEnd: boolean = false;
@@ -18,6 +17,7 @@ struct NotificationPage {
   @State private error: string = '';
   @State private markingRead: boolean = false;
   @State private unreadCounts: Record<string, number> = {};
+  @State private invitation: ZhihuNotificationInvitation | undefined = undefined;
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
   @StorageLink('oledBlack') private oledBlack: boolean = false;
   @StorageLink('isDark') private isDark: boolean = false;
@@ -27,33 +27,28 @@ struct NotificationPage {
   }
 
   aboutToAppear(): void {
-    this.loadCategory(0, true);
-    this.refreshUnreadCounts();
+    this.loadOverview(true);
   }
 
   private get totalUnread(): number {
     return Object.values(this.unreadCounts).reduce((acc, n) => acc + n, 0);
   }
 
-  private async refreshUnreadCounts(): Promise<void> {
-    try {
-      this.unreadCounts = await NotificationService.loadUnreadCounts(this.context());
-    } catch (e) {
-      // 忽略，保持 UI 稳定
-    }
-  }
-
-  private async loadCategory(index: number, reset: boolean): Promise<void> {
+  private async loadOverview(reset: boolean): Promise<void> {
     if (this.loading) {
       return;
     }
     this.loading = true;
     this.error = '';
     try {
-      const category = this.categories[index];
-      const page = await NotificationService.loadNotifications(this.context(), category.key, reset ? undefined : this.nextUrl);
+      const page = await NotificationService.loadMessageOverview(
+        this.context(),
+        reset ? undefined : this.nextUrl
+      );
       if (reset) {
         this.items = page.items;
+        this.invitation = page.invitation;
+        this.unreadCounts = page.unreadCounts;
       } else {
         this.items = this.items.concat(page.items);
       }
@@ -66,21 +61,11 @@ struct NotificationPage {
     }
   }
 
-  private onCategoryChange(index: number): void {
-    if (index === this.selectedCategory) {
-      return;
-    }
-    this.selectedCategory = index;
-    this.nextUrl = '';
-    this.isEnd = false;
-    this.loadCategory(index, true);
-  }
-
   private loadMore(): void {
     if (this.isEnd || this.loading || this.nextUrl.length === 0) {
       return;
     }
-    this.loadCategory(this.selectedCategory, false);
+    this.loadOverview(false);
   }
 
   private async markAllRead(): Promise<void> {
@@ -89,8 +74,16 @@ struct NotificationPage {
     }
     this.markingRead = true;
     try {
-      const category = this.categories[this.selectedCategory];
-      await NotificationService.markAllRead(this.context(), category.key);
+      // 安卓 markAllAsRead：遍历 4 个分类各调一次 readall
+      for (const cat of this.categories) {
+        await NotificationService.markAllRead(this.context(), cat.key);
+      }
+      const updated: Record<string, number> = {};
+      for (const k of Object.keys(this.unreadCounts)) {
+        updated[k] = 0;
+      }
+      this.unreadCounts = updated;
+      // 列表来源会话项的未读角标也清零（对齐安卓全部已读）
       this.items = this.items.map<ZhihuNotification>((it) => ({
         id: it.id,
         isRead: true,
@@ -102,25 +95,27 @@ struct NotificationPage {
         sourceText: it.sourceText,
         sourceLink: it.sourceLink,
         targetLink: it.targetLink,
-        anchorTargetLink: it.anchorTargetLink,
         contentTargetLink: it.contentTargetLink,
         subTargetLink: it.subTargetLink,
         targetSourceTargetLink: it.targetSourceTargetLink,
         headTargetLink: it.headTargetLink,
+        anchorTargetLink: it.anchorTargetLink,
         targetType: it.targetType,
-        targetId: it.targetId
+        targetId: it.targetId,
+        unreadCount: 0
       }));
-      const updated: Record<string, number> = {};
-      for (const k of Object.keys(this.unreadCounts)) {
-        updated[k] = this.unreadCounts[k];
-      }
-      updated[category.key] = 0;
-      this.unreadCounts = updated;
     } catch (e) {
       // 忽略错误，保持 UI 稳定
     } finally {
       this.markingRead = false;
     }
+  }
+
+  private openCategory(category: ZhihuNotificationCategory): void {
+    router.pushUrl({
+      url: 'pages/NotificationTimeline',
+      params: { entryName: category.key, title: category.title }
+    });
   }
 
   private openNotification(item: ZhihuNotification): void {
@@ -204,6 +199,17 @@ struct NotificationPage {
       });
       return;
     }
+    if (resolvedTarget.kind === 'message') {
+      router.pushUrl({
+        url: 'pages/PrivateMessage',
+        params: {
+          peerId: resolvedTarget.peerId,
+          name: resolvedTarget.name ?? '',
+          avatarUrl: item.avatarUrl
+        }
+      });
+      return;
+    }
     router.pushUrl({
       url: 'pages/Article',
         params: {
@@ -238,6 +244,11 @@ struct NotificationPage {
 
   private formatUnread(count: number): string {
     return count > 99 ? '99+' : `${count}`;
+  }
+
+  private unreadOf(key: string): number {
+    const v = this.unreadCounts[key];
+    return v !== undefined ? v : 0;
   }
 
   build() {
@@ -278,7 +289,7 @@ struct NotificationPage {
       .alignItems(VerticalAlign.Center)
       .padding({ left: 8, right: 8, top: this.topSafeAreaVp + 12, bottom: 12 })
 
-      // ---- 分类图标栏（4 个，对齐安卓 NotificationCategoryRow）----
+      // ---- 分类图标栏（4 个，对齐安卓 NotificationCategoryRow）→ 点击跳转分类详情页 ----
       Row() {
         ForEach(this.categories, (cat: ZhihuNotificationCategory, idx: number) => {
           this.CategoryButton(cat, idx);
@@ -288,11 +299,26 @@ struct NotificationPage {
       .padding({ left: 8, right: 8, top: 8, bottom: 12 })
       .justifyContent(FlexAlign.SpaceEvenly)
 
+      // ---- 邀请回答入口（对齐安卓 NotificationInvitationRow：写死始终渲染，column_head 为空也显示，内部走兜底）----
+      this.InvitationEntry(this.invitation);
+
+      // ---- 「通知」分组标题行（安卓消息列表上方分隔）----
+      Row() {
+        Text('通知')
+          .fontSize(13)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_secondary'))
+          .margin({ left: 16, right: 8 })
+      }
+      .width('100%')
+      .padding({ top: 8, bottom: 4 })
+      .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+
       Divider()
         .color($r('app.color.card_border'))
         .width('100%')
 
-      // ---- 列表 ----
+      // ---- 来源会话列表（对齐安卓 NotificationConversationRow）----
       if (this.error.length > 0) {
         Column() {
           Text(this.error)
@@ -300,7 +326,7 @@ struct NotificationPage {
             .fontColor($r('app.color.text_secondary'))
           Button('重试')
             .margin({ top: 12 })
-            .onClick(() => this.loadCategory(this.selectedCategory, true))
+            .onClick(() => this.loadOverview(true))
         }
         .width('100%')
         .layoutWeight(1)
@@ -310,7 +336,7 @@ struct NotificationPage {
         List() {
           ForEach(this.items, (item: ZhihuNotification) => {
             ListItem() {
-              this.NotificationCard(item);
+              this.ConversationRow(item);
             }
             .onClick(() => this.openNotification(item))
           }, (item: ZhihuNotification) => item.id)
@@ -347,12 +373,12 @@ struct NotificationPage {
             .width(28)
             .height(28)
             .renderMode(ImageRenderMode.Template)
-            .fillColor(idx === this.selectedCategory ? $r('app.color.action_text') : $r('app.color.text_primary'))
+            .fillColor($r('app.color.text_primary'))
         }
         .width(48)
         .height(48)
         .borderRadius(24)
-        .backgroundColor(idx === this.selectedCategory ? $r('app.color.tab_selected_background') : Color.Transparent)
+        .backgroundColor($r('app.color.tab_selected_background'))
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
 
@@ -372,99 +398,156 @@ struct NotificationPage {
 
       Text(cat.title)
         .fontSize(12)
-        .fontColor(idx === this.selectedCategory ? $r('app.color.action_text') : $r('app.color.text_primary'))
+        .fontColor($r('app.color.text_primary'))
         .margin({ top: 6 })
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
     }
     .layoutWeight(1)
     .alignItems(HorizontalAlign.Center)
-    .onClick(() => this.onCategoryChange(idx))
+    .onClick(() => this.openCategory(cat))
   }
 
-  private unreadOf(key: string): number {
-    const v = this.unreadCounts[key];
-    return v !== undefined ? v : 0;
-  }
-
+  // 来源会话行（对齐安卓 NotificationConversationRow）：头像 + 标题 + 最新消息预览 + 未读角标
   @Builder
-  private NotificationCard(item: ZhihuNotification) {
-    Column() {
-      Row() {
-        if (!item.isRead) {
-          Circle()
-            .width(6)
-            .height(6)
-            .fill('#ff4d4f')
-            .margin({ top: 10, right: 4 })
-        } else {
-          Blank()
-            .width(10)
-        }
-
-        if (item.avatarUrl.length > 0) {
-          Image(item.avatarUrl)
-            .width(44)
-            .height(44)
-            .borderRadius(22)
-            .syncLoad(true)
-            .margin({ right: 12 })
-        }
-
+  private ConversationRow(item: ZhihuNotification) {
+    Row() {
+      if (item.avatarUrl.length > 0) {
+        Image(item.avatarUrl)
+          .width(44)
+          .height(44)
+          .borderRadius(22)
+          .syncLoad(true)
+          .margin({ right: 12 })
+      } else {
         Column() {
+          Text('🔔')
+            .fontSize(20)
+            .fontColor($r('app.color.text_primary'))
+        }
+        .width(44)
+        .height(44)
+        .borderRadius(22)
+        .backgroundColor($r('app.color.action_background'))
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .margin({ right: 12 })
+      }
+
+      Column() {
+        Row() {
           Text(item.title)
             .fontSize(16)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
-            .maxLines(2)
+            .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .width('100%')
+            .layoutWeight(1)
 
-          if (item.subtitle.length > 0) {
-            Text(item.subtitle)
-              .fontSize(13)
-              .fontColor($r('app.color.text_secondary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .width('100%')
-              .margin({ top: 3 })
-          }
-
-          if (item.body.length > 0) {
-            Text(item.body)
-              .fontSize(13)
-              .fontColor($r('app.color.text_secondary'))
-              .maxLines(3)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .width('100%')
-              .margin({ top: 4 })
+          if (item.unreadCount > 0) {
+            Text(this.formatUnread(item.unreadCount))
+              .fontSize(10)
+              .fontWeight(FontWeight.Bold)
+              .fontColor('#FFFFFF')
+              .backgroundColor('#ff4d4f')
+              .borderRadius(8)
+              .padding({ left: 5, right: 5, top: 1, bottom: 1 })
+              .margin({ left: 8 })
+          } else if (this.formatTime(item.createdTime).length > 0) {
+            Text(this.formatTime(item.createdTime))
+              .fontSize(12)
+              .fontColor($r('app.color.text_tertiary'))
+              .margin({ left: 8 })
           }
         }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
 
-        Text(this.formatTime(item.createdTime))
-          .fontSize(12)
-          .fontColor($r('app.color.text_tertiary'))
-          .margin({ left: 8 })
+        if (item.subtitle.length > 0) {
+          Text(item.subtitle)
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .margin({ top: 3 })
+        } else if (item.body.length > 0) {
+          Text(item.body)
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .margin({ top: 3 })
+        }
       }
-      .width('100%')
-      .alignItems(VerticalAlign.Top)
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+  }
 
-      if (item.sourceText.length > 0) {
-        Text(item.sourceText)
-          .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
-          .maxLines(3)
+  // 邀请回答入口（对齐安卓 NotificationInvitationRow：写死始终渲染）
+  // inv 可为 undefined（column_head 为空时），内部走兜底默认值，与安卓一致
+  @Builder
+  private InvitationEntry(inv: ZhihuNotificationInvitation | undefined) {
+    Row() {
+      Column() {
+        Image((inv !== undefined && inv.avatarUrl.length > 0) ? inv.avatarUrl : $r('app.media.nav_follow'))
+          .width(28)
+          .height(28)
+          .fillColor($r('app.color.action_text'))
+      }
+      .width(52)
+      .height(52)
+      .borderRadius(26)
+      .backgroundColor($r('app.color.action_background'))
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .margin({ right: 14 })
+
+      Column() {
+        Text((inv !== undefined && inv.title.length > 0) ? inv.title : '邀请回答')
+          .fontSize(16)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.text_primary'))
+          .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .width('100%')
-          .padding(12)
-          .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+
+        if (inv !== undefined && inv.text.length > 0) {
+          Text(inv.text)
+            .fontSize(13)
+            .fontColor($r('app.color.text_secondary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .width('100%')
+            .margin({ top: 3 })
+        }
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
+      if (inv !== undefined && inv.unreadCount > 0) {
+        Text(this.formatUnread(inv.unreadCount))
+          .fontSize(10)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#FFFFFF')
+          .backgroundColor('#ff4d4f')
           .borderRadius(8)
-          .margin({ top: 10, left: 16, right: 16 })
+          .padding({ left: 5, right: 5, top: 1, bottom: 1 })
       }
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+    .onClick(() => {
+      router.pushUrl({
+        url: 'pages/NotificationTimeline',
+        params: { entryName: 'invite', title: '邀请回答' }
+      });
+    })
   }
 }
