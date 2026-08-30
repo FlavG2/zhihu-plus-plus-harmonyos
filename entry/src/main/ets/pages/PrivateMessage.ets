@@ -23,7 +23,9 @@ struct PrivateMessagePage {
   @State private loading: boolean = false;
   @State private error: string = '';
   @State private draft: string = '';
+  @State private sending: boolean = false;
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
+  @StorageProp('bottomSafeAreaVp') private bottomSafeAreaVp: number = 0;
   @StorageLink('oledBlack') private oledBlack: boolean = false;
   @StorageLink('isDark') private isDark: boolean = false;
 
@@ -41,6 +43,26 @@ struct PrivateMessagePage {
       return;
     }
     this.loadMessages(true);
+  }
+
+  // 发送私信：调服务层加密并 POST，成功后把服务端返回的消息插入列表末尾（倒序展示即显示最底部）
+  private async handleSend(): Promise<void> {
+    const text = this.draft.trim();
+    if (text.length === 0 || this.sending) {
+      return;
+    }
+    this.sending = true;
+    try {
+      const msg = await PrivateMessageService.sendMessage(this.context(), this.peerId, text);
+      this.messages = this.messages.concat([msg]);
+      this.draft = '';
+    } catch (e) {
+      promptAction.showToast({
+        message: e instanceof Error ? e.message : '发送失败'
+      });
+    } finally {
+      this.sending = false;
+    }
   }
 
   private async loadMessages(reset: boolean): Promise<void> {
@@ -111,16 +133,9 @@ struct PrivateMessagePage {
       return '';
     }
     const date = new Date(epochSeconds * 1000);
-    const now = new Date();
     const pad = (n: number): string => (n < 10 ? `0${n}` : `${n}`);
-    const hm = `${pad(date.getHours())}:${pad(date.getMinutes())}`;
-    const sameDay = date.getFullYear() === now.getFullYear() &&
-      date.getMonth() === now.getMonth() &&
-      date.getDate() === now.getDate();
-    if (sameDay) {
-      return hm;
-    }
-    return `${date.getMonth() + 1}/${date.getDate()} ${hm}`;
+    // 对齐安卓私信时间戳：MM-DD HH:mm
+    return `${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
   }
 
   private isIncoming(msg: ZhihuPrivateMessage): boolean {
@@ -130,36 +145,29 @@ struct PrivateMessagePage {
 
   build() {
     Column() {
-      // 顶栏（对齐安卓 CenterAlignedTopAppBar：对方头像 + 昵称）
-      Row() {
-        Image(this.peerAvatar.length > 0 ? this.peerAvatar : $r('app.media.nav_follow'))
-          .width(32)
-          .height(32)
-          .borderRadius(16)
-          .backgroundColor($r('app.color.action_background'))
-          .objectFit(ImageFit.Cover)
-          .onClick(() => {
-            if (this.peerAvatar.length > 0) {
-              // 占位：点击头像可跳转对方主页（后续补充）
-            }
-          })
+      // 顶栏（对齐安卓：左侧返回箭头 + 居中标题）
+      Stack({ alignContent: Alignment.Center }) {
         Text(this.peerName.length > 0 ? this.peerName : '私信')
           .fontSize(17)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
-          .margin({ left: 8 })
-          .layoutWeight(1)
-        Image($r('app.media.arrow_back'))
-          .width(24)
-          .height(24)
-          .fillColor($r('app.color.text_primary'))
-          .onClick(() => {
-            router.back();
-          })
+        Row() {
+          Image($r('app.media.arrow_back'))
+            .width(24)
+            .height(24)
+            .fillColor($r('app.color.text_primary'))
+            .onClick(() => {
+              router.back();
+            })
+        }
+        .width('100%')
+        .height('100%')
+        .padding({ left: 16 })
+        .justifyContent(FlexAlign.Start)
+        .alignItems(VerticalAlign.Center)
       }
       .width('100%')
       .height(56)
-      .padding({ left: 16, right: 16 })
       .backgroundColor(ThemeColors.chromeBackground(this.oledBlack, this.isDark))
 
       // 消息列表（倒序，最新在底部）
@@ -209,18 +217,40 @@ struct PrivateMessagePage {
         })
       }
 
-      // 底部输入栏（只读阶段：禁用发送，仅占位）
+      // 底部输入栏（对齐安卓：输入框 + 表情占位 + 发送按钮）
       Row() {
-        TextInput({ text: this.draft, placeholder: '发私信（暂不支持发送）' })
-          .width('100%')
+        TextInput({ text: $$this.draft, placeholder: '发私信' })
+          .layoutWeight(1)
           .height(40)
           .backgroundColor($r('app.color.card_background'))
-          .borderRadius(12)
-          .padding({ left: 12, right: 12 })
-          .enabled(false)
+          .borderRadius(20)
+          .padding({ left: 16, right: 16 })
+
+        // 表情（按需求不开放功能，仅占位）
+        Image($r('app.media.ic_emoji'))
+          .width(26)
+          .height(26)
+          .fillColor($r('app.color.text_secondary'))
+          .margin({ left: 8, right: 4 })
+          .onClick(() => {
+            promptAction.showToast({ message: '表情功能暂未开放' });
+          })
+
+        // 发送
+        Image($r('app.media.ic_send'))
+          .width(28)
+          .height(28)
+          .fillColor(this.draft.trim().length > 0
+            ? $r('app.color.action_background')
+            : $r('app.color.text_tertiary'))
+          .margin({ left: 4, right: 8 })
+          .enabled(this.draft.trim().length > 0 && !this.sending)
+          .onClick(() => {
+            this.handleSend();
+          })
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+      .padding({ left: 12, right: 8, top: 8, bottom: 8 + this.bottomSafeAreaVp })
       .backgroundColor(ThemeColors.chromeBackground(this.oledBlack, this.isDark))
     }
     .width('100%')

@@ -45,10 +45,40 @@ export type ZhihuRichWebEvent =
   | {
     readonly type: 'video';
     readonly videoId: string;
+  }
+  | {
+    readonly type: 'segment';
+    readonly id: string;
+    readonly likeCount: number;
+    readonly commentCount: number;
+    readonly isLike: boolean;
+    readonly displayText: string;
+    readonly contentId: string;
+    readonly contentType: string;
+    readonly paragraphId: string;
+    readonly startOffset: number;
+    readonly endOffset: number;
+    readonly segIds: string[];
   };
+
+/** 划线片段点击透传的结构（与 ZhihuRichWebEvent 的 'segment' 变体一致，但不带 type 便于 UI 层持有） */
+export interface ZhihuSegmentTapInfo {
+  readonly id: string;
+  readonly likeCount: number;
+  readonly commentCount: number;
+  readonly isLike: boolean;
+  readonly displayText: string;
+  readonly contentId: string;
+  readonly contentType: string;
+  readonly paragraphId: string;
+  readonly startOffset: number;
+  readonly endOffset: number;
+  readonly segIds: string[];
+}
 
 const RAWFILE_SCRIPT_PATHS: string[] = [
   'zhihu_web/click-listener.js',
+  'zhihu_web/segment-highlight.js',
   'zhihu_web/math-copy.js',
   'zhihu_web/footnotes.js',
   'zhihu_web/content-height.js',
@@ -254,6 +284,26 @@ function parseBridgeEvent(payload: string): ZhihuRichWebEvent | undefined {
       return {
         type: 'video',
         videoId
+      };
+    }
+    if (type === 'segment') {
+      const rawSegIds = parsed.segIds;
+      const segIds: string[] = Array.isArray(rawSegIds)
+        ? rawSegIds.filter((x: Object): boolean => typeof x === 'string').map((x: Object): string => `${x}`)
+        : [];
+      return {
+        type: 'segment',
+        id: stringValue(parsed.id),
+        likeCount: numberValue(parsed.likeCount),
+        commentCount: numberValue(parsed.commentCount),
+        isLike: stringValue(parsed.isLike) === 'true',
+        displayText: stringValue(parsed.displayText),
+        contentId: stringValue(parsed.contentId),
+        contentType: stringValue(parsed.contentType),
+        paragraphId: stringValue(parsed.paragraphId),
+        startOffset: numberValue(parsed.startOffset),
+        endOffset: numberValue(parsed.endOffset),
+        segIds
       };
     }
   } catch (_) {

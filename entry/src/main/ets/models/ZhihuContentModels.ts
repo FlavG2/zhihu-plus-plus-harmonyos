@@ -86,6 +86,29 @@ export interface ZhihuAnswerPagination {
   readonly nextAnswerIds: string[];
 }
 
+// 划线片段（句子/段落高亮）：对齐安卓 SegmentInfo。知乎 API 字段为 segment_infos / allow_segment_interaction。
+export interface ZhihuSegmentMeta {
+  readonly segIds: string[];
+  readonly isLike: boolean;
+  readonly likeCount: number;
+  readonly commentCount: number;
+  readonly myCommentCount: number;
+  readonly isSpan: boolean;
+}
+
+export interface ZhihuSegmentMark {
+  readonly startIndex: number;
+  readonly endIndex: number;
+  readonly segInfo?: ZhihuSegmentMeta;
+  readonly masterSegInfo?: ZhihuSegmentMeta;
+}
+
+export interface ZhihuSegmentParagraph {
+  readonly pid: string;
+  readonly text: string;
+  readonly marks: ZhihuSegmentMark[];
+}
+
 export interface ZhihuContentDetail {
   readonly target: ZhihuCommentableTarget;
   readonly title: string;
@@ -104,6 +127,9 @@ export interface ZhihuContentDetail {
   readonly canComment: boolean;
   readonly canVote: boolean;
   readonly supportsDownvote: boolean;
+  // 划线片段：仅部分回答/文章详情返回（API 字段 segment_infos / allow_segment_interaction）
+  readonly segmentInfos?: ZhihuSegmentParagraph[];
+  readonly allowSegmentInteraction?: boolean;
   // 仅回答详情返回：用于左右滑动切换上一个/下一个回答
   readonly paginationInfo?: ZhihuAnswerPagination;
 }

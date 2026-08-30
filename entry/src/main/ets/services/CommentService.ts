@@ -17,6 +17,25 @@ interface JsonObject {
   [key: string]: JsonValue;
 }
 
+interface ZhihuSegmentCommentContext {
+  segmentContent: string;
+  paragraphId: string;
+  startOffset: number;
+  endOffset: number;
+}
+
+interface SubmitCommentBody {
+  content: string;
+  reply_comment_id?: string;
+  segment?: {
+    content: string;
+    position: {
+      start: { offset: number; paragraph_id: string };
+      end: { offset: number; paragraph_id: string };
+    };
+  };
+}
+
 export class CommentService {
   private static stringValue(value: JsonValue | undefined): string {
     return typeof value === 'string' ? value : '';
@@ -112,6 +131,16 @@ export class CommentService {
     return `https://www.zhihu.com/api/v4/comment_v5/pins/${target.id}/root_comment?order_by=${orderBy}`;
   }
 
+  private static segmentRootCommentUrl(
+    target: ZhihuCommentableTarget,
+    segmentId: string,
+    sortOrder: CommentSortOrder
+  ): string {
+    const orderBy = sortOrder === 'time' ? 'ts' : 'score';
+    const type = target.kind.replace(/s$/, '');
+    return `https://www.zhihu.com/api/v4/comment_v5/${type}s/${target.id}/segment/root_comment?segment_id=${segmentId}&order_by=${orderBy}`;
+  }
+
   private static childCommentUrl(target: ZhihuCommentTarget): string {
     return `https://www.zhihu.com/api/v4/comment_v5/comment/${target.commentId}/child_comment`;
   }
@@ -131,10 +160,14 @@ export class CommentService {
     context: common.Context,
     target: ZhihuCommentableTarget,
     sortOrder: CommentSortOrder,
-    nextUrl?: string
+    nextUrl?: string,
+    segmentId?: string
   ): Promise<ZhihuCommentPage> {
     await ZhihuEmojiService.initialize(context);
-    const payload = await ZhihuApi.getJson(context, nextUrl ?? this.rootCommentUrl(target, sortOrder), {
+    const firstUrl = nextUrl ?? (segmentId && segmentId.length > 0
+      ? this.segmentRootCommentUrl(target, segmentId, sortOrder)
+      : this.rootCommentUrl(target, sortOrder));
+    const payload = await ZhihuApi.getJson(context, firstUrl, {
       signed: true
     });
     if (payload === null) {
@@ -181,16 +214,29 @@ export class CommentService {
     context: common.Context,
     target: ZhihuCommentableTarget,
     commentText: string,
-    replyCommentId?: string
+    replyCommentId?: string,
+    segment?: ZhihuSegmentCommentContext
   ): Promise<ZhihuCommentItem> {
     const trimmed = commentText.trim();
     if (trimmed.length === 0) {
       throw new Error('评论不能为空');
     }
-    const body = JSON.stringify({
-      content: `<p>${escapeHtml(trimmed)}</p>`,
-      ...(typeof replyCommentId === 'string' && replyCommentId.length > 0 ? { reply_comment_id: replyCommentId } : {})
-    });
+    const bodyObj: SubmitCommentBody = {
+      content: `<p>${escapeHtml(trimmed)}</p>`
+    };
+    if (typeof replyCommentId === 'string' && replyCommentId.length > 0) {
+      bodyObj.reply_comment_id = replyCommentId;
+    }
+    if (segment !== undefined) {
+      bodyObj.segment = {
+        content: segment.segmentContent,
+        position: {
+          start: { offset: segment.startOffset, paragraph_id: segment.paragraphId },
+          end: { offset: segment.endOffset, paragraph_id: segment.paragraphId }
+        }
+      };
+    }
+    const body = JSON.stringify(bodyObj);
     const payload = await ZhihuApi.postJson(context, this.submitCommentUrl(target), {
       signed: true,
       body,

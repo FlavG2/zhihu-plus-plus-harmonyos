@@ -2,7 +2,7 @@ import { router, promptAction } from '@kit.ArkUI';
 import common from '@ohos.app.ability.common';
 import { NotificationService } from '../services/NotificationService';
 import { ZhihuNotification } from '../models/ZhihuNotificationModels';
-import { resolveZhihuContent } from '../services/ZhihuContentResolver';
+import { resolveZhihuContent, resolveNotificationEntryUrl } from '../services/ZhihuContentResolver';
 import { serializeZhihuContentTarget, ZhihuCommentableTarget } from '../models/ZhihuContentModels';
 import { ThemeColors } from '../services/ThemeColors';
 
@@ -147,11 +147,18 @@ struct NotificationTimelinePage {
     }
     if (resolvedTarget === undefined) {
       if (candidates.length > 0) {
-        const raw = candidates[0];
-        promptAction.showToast({
-          message: `未识别通知链接: ${raw.length > 48 ? raw.slice(0, 48) + '…' : raw}`
-        });
-        router.pushUrl({ url: 'pages/WebContent', params: { url: raw } });
+        // 通知时间线入口（官方账号消息 / 系统消息等）：原生跳动，不进 WebView
+        const entryUrl = candidates.find((l) => resolveNotificationEntryUrl(l) !== undefined);
+        if (entryUrl !== undefined) {
+          const entry = resolveNotificationEntryUrl(entryUrl)!;
+          router.pushUrl({
+            url: 'pages/NotificationTimeline',
+            params: { entryName: entry.entryName, title: entry.title }
+          });
+          return;
+        }
+        // 系统消息 / 未识别通知：不跳转网页，提示暂不支持
+        promptAction.showToast({ message: '暂不支持此消息' });
       }
       return;
     }

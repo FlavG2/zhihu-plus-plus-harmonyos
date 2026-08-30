@@ -60,6 +60,33 @@
       return;
     }
 
+    // 划线片段：命中 span.highlight-wrap 优先于普通链接（高亮句可能包在 <a> 内，先拦截）
+    var seg = target.closest('span.highlight-wrap');
+    if (seg instanceof HTMLElement) {
+      var ds = seg.dataset;
+      var segIds = [];
+      try {
+        segIds = JSON.parse(ds.highlightSegIds || '[]');
+      } catch (_) {
+        segIds = [];
+      }
+      post({
+        type: 'segment',
+        id: ds.highlightId || '',
+        likeCount: Number(ds.highlightLikeCount) || 0,
+        commentCount: Number(ds.highlightCommentCount) || 0,
+        isLike: ds.highlightIsLike === 'true',
+        displayText: (seg.textContent || '').trim(),
+        contentId: ds.highlightContentId || '',
+        contentType: ds.highlightContentType || '',
+        paragraphId: ds.highlightPid || '',
+        startOffset: Number(ds.highlightStartOffset) || 0,
+        endOffset: Number(ds.highlightEndOffset) || 0,
+        segIds: segIds
+      });
+      return;
+    }
+
     var anchor = target.closest('a');
     if (!(anchor instanceof HTMLAnchorElement)) {
       return;

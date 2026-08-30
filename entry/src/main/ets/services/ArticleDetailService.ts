@@ -4,6 +4,7 @@ import {
   ZhihuAuthorProfile,
   ZhihuCommentableTarget,
   ZhihuContentDetail,
+  ZhihuSegmentParagraph,
   ZhihuVoteState
 } from '../models/ZhihuContentModels';
 import { escapeHtml, normalizeRichContentHtml, paragraphizeText } from '../utils/ZhihuHtml';
@@ -18,9 +19,9 @@ interface JsonObject {
 
 export class ArticleDetailService {
   private static readonly ANSWER_INCLUDE =
-    '.settings,content,editable_content,paid_info,can_comment,excerpt,thanks_count,voteup_count,comment_count,visited_count,attachment,reaction,ip_info,pagination_info,endorsements,question.topics,question.author,reaction.relation.voting,author.badge_v2,settings.table_of_contents.enabled';
+    '.settings,content,editable_content,paid_info,can_comment,excerpt,thanks_count,voteup_count,comment_count,visited_count,attachment,reaction,ip_info,pagination_info,endorsements,question.topics,question.author,reaction.relation.voting,author.badge_v2,settings.table_of_contents.enabled,segment_infos,allow_segment_interaction';
   private static readonly ARTICLE_INCLUDE =
-    'content,topics,paid_info,can_comment,excerpt,thanks_count,voteup_count,comment_count,visited_count,relationship,ip_info,relationship.vote,author.badge_v2';
+    'content,topics,paid_info,can_comment,excerpt,thanks_count,voteup_count,comment_count,visited_count,relationship,ip_info,relationship.vote,author.badge_v2,segment_infos,allow_segment_interaction';
   private static readonly QUESTION_INCLUDE =
     'read_count,visit_count,answer_count,voteup_count,comment_count,follower_count,detail,excerpt,author,relationship.is_following,topics';
 
@@ -103,6 +104,60 @@ export class ArticleDetailService {
     return ZhihuEmojiService.replaceHtml(normalizeRichContentHtml(html));
   }
 
+  private static mapSegmentMeta(raw: JsonValue | undefined): {
+    segIds: string[];
+    isLike: boolean;
+    likeCount: number;
+    commentCount: number;
+    myCommentCount: number;
+    isSpan: boolean;
+  } {
+    const o = this.objectValue(raw);
+    const rawSegIds = this.arrayValue(o.seg_ids ?? o.segIds);
+    const segIds = rawSegIds.map((v: JsonValue) => `${v}`).filter((v: string) => v.length > 0);
+    return {
+      segIds,
+      isLike: this.booleanValue(o.is_like ?? o.isLike),
+      likeCount: this.numberValue(o.like_count ?? o.likeCount),
+      commentCount: this.numberValue(o.comment_count ?? o.commentCount),
+      myCommentCount: this.numberValue(o.my_comment_count ?? o.myCommentCount),
+      isSpan: this.booleanValue(o.is_span ?? o.isSpan)
+    };
+  }
+
+  private static mapSegmentMark(raw: JsonObject): {
+    startIndex: number;
+    endIndex: number;
+    segInfo?: ReturnType<typeof ArticleDetailService.mapSegmentMeta>;
+    masterSegInfo?: ReturnType<typeof ArticleDetailService.mapSegmentMeta>;
+  } {
+    return {
+      startIndex: this.numberValue(raw.start_index ?? raw.startIndex),
+      endIndex: this.numberValue(raw.end_index ?? raw.endIndex),
+      segInfo: raw.seg_info !== undefined ? this.mapSegmentMeta(raw.seg_info) : undefined,
+      masterSegInfo: raw.master_seg_info !== undefined ? this.mapSegmentMeta(raw.master_seg_info) : undefined
+    };
+  }
+
+  private static mapSegmentParagraphs(raw: JsonValue | undefined): ZhihuSegmentParagraph[] {
+    const arr = this.arrayValue(raw);
+    const result: ZhihuSegmentParagraph[] = [];
+    arr.forEach((item: JsonValue) => {
+      const o = this.objectValue(item);
+      const pid = this.stringValue(o.pid);
+      if (pid.length === 0) {
+        return;
+      }
+      const marks = this.arrayValue(o.marks).map((m: JsonValue) => this.mapSegmentMark(this.objectValue(m)));
+      result.push({
+        pid,
+        text: this.stringValue(o.text),
+        marks
+      });
+    });
+    return result;
+  }
+
   private static buildPinHtml(payload: JsonObject): string {
     const contentHtml = this.stringValue(payload.content_html) || this.stringValue(payload.contentHtml);
     if (contentHtml.length > 0) {
@@ -175,6 +230,8 @@ export class ArticleDetailService {
               nextAnswerIds: nextIdsRaw.map((v: JsonValue) => `${v}`)
             }
           : undefined;
+      const segmentInfos = this.mapSegmentParagraphs(payload.segment_infos);
+      const allowSegmentInteraction = this.numberValue(payload.allow_segment_interaction) === 1 || segmentInfos.length > 0;
       return {
         target: {
           ...target,
@@ -200,6 +257,8 @@ export class ArticleDetailService {
         canComment: this.canComment(payload),
         canVote: true,
         supportsDownvote: true,
+        segmentInfos,
+        allowSegmentInteraction,
         paginationInfo
       };
     }
@@ -209,6 +268,8 @@ export class ArticleDetailService {
         throw new Error('文章内容为空');
       }
       const rawHtmlContent = this.stringValue(payload.content) || paragraphizeText(this.stringValue(payload.excerpt));
+      const segmentInfos = this.mapSegmentParagraphs(payload.segment_infos);
+      const allowSegmentInteraction = this.numberValue(payload.allow_segment_interaction) === 1 || segmentInfos.length > 0;
       return {
         target: {
           ...target,
@@ -229,7 +290,9 @@ export class ArticleDetailService {
         questionTitle: '',
         canComment: this.canComment(payload),
         canVote: true,
-        supportsDownvote: true
+        supportsDownvote: true,
+        segmentInfos,
+        allowSegmentInteraction
       };
     }
     if (target.kind === 'question') {

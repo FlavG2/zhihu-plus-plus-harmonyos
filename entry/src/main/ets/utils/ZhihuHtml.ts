@@ -13,6 +13,21 @@ function protocolizeUrl(url: string): string {
   return url;
 }
 
+/**
+ * 知乎正文里部分图片 URL 带 veImageX 处理参数（形如
+ * /50/v2-xxxx~resize:720:q75_720w.jpg），该格式在 CDN 上**无论带不带 UA 都返回 404**；
+ * 还原成标准宽度后缀（_720w.jpg）才返回 200。
+ * curl 实测（2026-08-30，带移动端 UA）：
+ *   /50/v2-xxx~resize:720:q75_720w.jpg -> 404 (image/x-empty)
+ *   /50/v2-xxx_720w.jpg                -> 200 (image/jpeg)
+ *   /v2-xxx.jpg                        -> 200 (image/jpeg)
+ * 故剥离 `~resize:<宽>:q<质量>` 处理参数段，保留后面的标准宽度后缀。
+ */
+function normalizeImageUrl(url: string): string {
+  // 注意：捕获组已包含前导下划线（_720w.jpg），替换串不可再补下划线，否则会出现 __720w.jpg 再次 404。
+  return url.replace(/~resize:[^/]*?(_\d+w\.(?:jpg|jpeg|png|gif|webp))/gi, '$1');
+}
+
 /** 格式化计数（万单位），用于摘要卡片 */
 function fmtCounter(value: number, unit: string): string {
   if (value >= 10000) {
@@ -41,7 +56,7 @@ function firstImageCandidate(attributes: string): string {
   for (const pattern of candidates) {
     const match = attributes.match(pattern);
     if (match !== null && typeof match[1] === 'string') {
-      const candidate = protocolizeUrl(match[1].trim());
+      const candidate = normalizeImageUrl(protocolizeUrl(match[1].trim()));
       if (candidate.length > 0
         && candidate !== 'about:blank'
         && !candidate.startsWith('data:image/gif;base64,R0lGOD')
@@ -156,7 +171,8 @@ export function buildArticleHtmlDocument(
   topSafeAreaVp: number = 0,
   paddingBottomVp: number = 100,
   minHeightVh: number = 100,
-  headerHtml?: string
+  headerHtml?: string,
+  segmentJson?: string
 ): string {
   const safeTitle = escapeHtml(title);
   const safeSourceUrl = escapeHtml(sourceUrl);
@@ -386,6 +402,15 @@ export function buildArticleHtmlDocument(
         color: var(--link);
         text-decoration: none;
       }
+      /* 划线片段：正文里的虚线下划线句子；有评论时用橙色虚线对齐安卓/知乎原版 */
+      .highlight-wrap {
+        border-bottom: 1px dashed var(--text-secondary);
+        cursor: pointer;
+        border-radius: 2px;
+      }
+      .highlight-wrap.has-comments {
+        border-bottom-color: #ff7d00;
+      }
       code {
         padding: 0.08em 0.28em;
         border-radius: 6px;
@@ -472,6 +497,7 @@ export function buildArticleHtmlDocument(
   </head>
   <body data-source-url="${safeSourceUrl}">
     <article id="zhihu-body-root" data-zhihu-body="true">${(headerHtml !== undefined && headerHtml.length > 0) ? headerHtml : summaryHtml}<div id="zhihu-body-content">${contentHtml}</div>      <div class="zhihu-answer-end" role="separator">—— 已到底部 ——</div><div id="zhihu-body-sentinel" aria-hidden="true"></div></article>
+${(segmentJson !== undefined && segmentJson.length > 0) ? `\n    <script type="application/json" id="zhihu-segment-data">${segmentJson.replace(/<\/script/gi, '<\\/script')}</script>` : ''}
   </body>
 </html>`;
 }

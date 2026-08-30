@@ -23,7 +23,12 @@ function extractQueryParam(url: string, key: string): string {
     const eq = p.indexOf('=');
     const k = eq >= 0 ? p.slice(0, eq) : p;
     if (k === key) {
-      return eq >= 0 ? p.slice(eq + 1) : '';
+      const raw = eq >= 0 ? p.slice(eq + 1) : '';
+      try {
+        return decodeURIComponent(raw);
+      } catch (e) {
+        return raw;
+      }
     }
   }
   return '';
@@ -239,6 +244,23 @@ export function resolveZhihuContent(url: string): ZhihuCommentableTarget | undef
   }
 
   return undefined;
+}
+
+// 通知时间线入口（对齐安卓 Notification.Entry）：
+// https://www.zhihu.com/notifications/v3/timeline/entry/{entryName}?title=...
+// 安卓将此映射为原生通知时间线页（而非 WebView）。官方账号消息 / 系统消息等走此形态。
+export function resolveNotificationEntryUrl(url: string): { entryName: string; title: string } | undefined {
+  const normalized = trimQueryAndHash(url.trim());
+  const match = normalized.match(/^https?:\/\/(?:www\.)?zhihu\.com\/notifications\/v\d+\/timeline\/entry\/([^/?#]+)$/i);
+  if (match === null) {
+    return undefined;
+  }
+  const entryName = match[1];
+  if (entryName.length === 0) {
+    return undefined;
+  }
+  const title = extractQueryParam(url, 'title');
+  return { entryName, title: title.length > 0 ? title : entryName };
 }
 
 // 话题深链：zhihu://topic/{id} 与 https://www.zhihu.com/topic/{id}

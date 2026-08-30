@@ -23,6 +23,7 @@ import {
   ZhihuCommentTarget,
   ZhihuContentDetail,
   ZhihuContentTarget,
+  ZhihuSegmentParagraph,
   ZhihuVoteState
 } from '../models/ZhihuContentModels';
 import { SessionSnapshot, DEFAULT_SESSION_SNAPSHOT, HomeFeedItem, ZhihuCollection } from '../models/ZhihuModels';
@@ -37,6 +38,7 @@ import { CommentService } from '../services/CommentService';
 import { CollectionService } from '../services/CollectionService';
 import { ZhihuSessionRepository } from '../services/ZhihuSessionRepository';
 import { resolveZhihuContent } from '../services/ZhihuContentResolver';
+import { ZhihuApi } from '../services/ZhihuApi';
 import { ZhihuEmojiItem, EmojiPickerItem, ZhihuEmojiService, CommentContentSegment } from '../services/ZhihuEmojiService';
 import { startSummary as startSummaryStream, SummaryOptions } from '../services/SummaryService';
 import { TtsController } from '../services/TtsService';
@@ -55,8 +57,36 @@ import {
   stripCommentImageLinks,
   type ArticleSummaryData
 } from '../utils/ZhihuHtml';
-import { resolveZhihuThemeMode } from '../utils/ZhihuWebBridge';
+import { resolveZhihuThemeMode, ZhihuSegmentTapInfo } from '../utils/ZhihuWebBridge';
 import { formatTimestamp } from '../utils/Time';
+
+interface SegmentInjectionPayload {
+  allow: boolean;
+  sourceUrl: string;
+  contentId: string;
+  contentType: string;
+  paragraphs: ZhihuSegmentParagraph[];
+}
+
+interface SegmentLikePositionOffset {
+  paragraph_id: string;
+  offset: number;
+}
+
+interface SegmentLikePosition {
+  start: SegmentLikePositionOffset;
+  end: SegmentLikePositionOffset;
+}
+
+interface SegmentLikeBody {
+  seg_id: string;
+  content: string;
+  position: SegmentLikePosition;
+}
+
+interface SegmentUnlikeBody {
+  seg_ids: string;
+}
 
 interface DialogResult {
   index: number;
@@ -275,6 +305,11 @@ struct Article {
   @State private articleLoading: boolean = true;
   @State private articleError: string = '';
   @State private showRootCommentSheet: boolean = false;
+  @State private showSegmentSheet: boolean = false;
+  @State private selectedSegment: ZhihuSegmentTapInfo | null = null;
+  @State private segmentLiking: boolean = false;
+  @State private currentSegmentForComments: ZhihuSegmentTapInfo | null = null;
+  @State private rootCommentCacheKey: string = '';
   @State private anchorCommentId: string = '';
   @State private anchorConsumed: boolean = false;
   @State private rootComments: ZhihuCommentItem[] = [];
@@ -1655,7 +1690,10 @@ struct Article {
       return;
     }
     const tid = detail.target.id;
-    if (!forceReload && this.rootCommentTargetId === tid && this.rootComments.length > 0) {
+    const seg = this.currentSegmentForComments;
+    const segmentId = seg ? seg.segIds.join(',') : '';
+    const cacheKey = segmentId.length > 0 ? `seg:${segmentId}` : tid;
+    if (!forceReload && this.rootCommentCacheKey === cacheKey && this.rootComments.length > 0) {
       return;
     }
     if (this.rootCommentLoading && !forceReload) {
@@ -1663,7 +1701,13 @@ struct Article {
     }
     this.rootCommentLoading = true;
     try {
-      const page = await CommentService.loadRootComments(this.context(), detail.target, this.rootCommentSortOrder);
+      const page = await CommentService.loadRootComments(
+        this.context(),
+        detail.target,
+        this.rootCommentSortOrder,
+        undefined,
+        segmentId.length > 0 ? segmentId : undefined
+      );
       // 滑动期间若 this.detail 已被切到别的回答，丢弃这次结果，避免把旧回答的评论写回
       if (this.detail === undefined || this.detail.target.id !== tid) {
         return;
@@ -1673,6 +1717,7 @@ struct Article {
       this.rootCommentEnd = page.isEnd;
       this.rootCommentError = '';
       this.rootCommentTargetId = tid;
+      this.rootCommentCacheKey = cacheKey;
       // 通知评论定位：根评论加载完成后，置顶锚点评论（必要时自动展开楼中楼）
       this.consumeAnchorComment();
     } catch (error) {
@@ -1768,13 +1813,26 @@ struct Article {
         this.context(),
         detail.target,
         this.rootCommentDraft,
-        this.rootReplyTo?.id
+        this.rootReplyTo?.id,
+        this.currentSegmentForComments
+          ? {
+              segmentContent: this.currentSegmentForComments.displayText,
+              paragraphId: this.currentSegmentForComments.paragraphId,
+              startOffset: this.currentSegmentForComments.startOffset,
+              endOffset: this.currentSegmentForComments.endOffset
+            }
+          : undefined
       );
       this.rootComments = [created, ...this.rootComments];
       this.rootCommentDraft = '';
       this.rootReplyTo = undefined;
       this.showRootEmojiPanel = false;
-      this.detail = copyDetail(detail, undefined, undefined, detail.commentCount + 1);
+      if (this.currentSegmentForComments === null) {
+        this.detail = copyDetail(detail, undefined, undefined, detail.commentCount + 1);
+      } else {
+        // 片段评论：重新拉取该片段评论列表以反映最新评论
+        await this.ensureRootComments(true);
+      }
       this.showToast('评论已发送');
     } catch (error) {
       const message = error instanceof Error ? error.message : '未知错误';
@@ -1895,6 +1953,17 @@ struct Article {
   private openComments(): void {
     this.showRootCommentSheet = true;
     this.ensureRootComments();
+  }
+
+  private openSegmentComments(): void {
+    const seg = this.selectedSegment;
+    if (seg === null) {
+      return;
+    }
+    this.currentSegmentForComments = seg;
+    this.showSegmentSheet = false;
+    this.showRootCommentSheet = true;
+    this.ensureRootComments(true);
   }
 
   /** 顶部右侧三点菜单：固定在问题标题首行右侧，不随正文滚动（无 translate）。
@@ -2132,7 +2201,11 @@ struct Article {
               createdTime: this.detail?.createdTime ?? 0,
               ipInfo: this.detail?.ipInfo ?? '',
             } as ArticleSummaryData,
-            this.topSafeAreaVp
+            this.topSafeAreaVp,
+            100,
+            100,
+            undefined,
+            this.buildSegmentJson()
           ),
           sourceUrl: this.detail.browserUrl,
           title: this.detail.title,
@@ -2165,6 +2238,13 @@ struct Article {
           },
           onHorizontalSwipe: (state: string, dx: number) => {
             this.handleHorizontalSwipe(state, dx);
+          },
+          onSegmentTap: (seg: ZhihuSegmentTapInfo) => {
+            if (this.detail?.allowSegmentInteraction !== true) {
+              return;
+            }
+            this.selectedSegment = seg;
+            this.showSegmentSheet = true;
           }
         })
       }
@@ -2387,6 +2467,8 @@ struct Article {
               onDisappear: () => {
                 this.showRootCommentSheet = false;
                 this.rootReplyTo = undefined;
+                this.currentSegmentForComments = null;
+                this.rootCommentCacheKey = '';
               },
               onWillDismiss: (action: DismissSheetAction) => {
                 if (this.showRootEmojiPanel || this.showChildEmojiPanel) {
@@ -2492,6 +2574,22 @@ struct Article {
               backgroundColor: ThemeColors.articleBackground(this.oledBlack, this.isDark),
               onDisappear: () => {
                 this.showExportSheet = false;
+              }
+            })
+
+          // 划线片段 bindSheet（独立节点，避免与评论弹窗同一节点冲突）
+          Column()
+            .width(1)
+            .height(1)
+            .bindSheet($$this.showSegmentSheet, this.SegmentActionSheet(), {
+              showClose: true,
+              dragBar: true,
+              preferType: SheetType.BOTTOM,
+              detents: [SheetSize.MEDIUM, SheetSize.LARGE],
+              backgroundColor: ThemeColors.articleBackground(this.oledBlack, this.isDark),
+              onDisappear: () => {
+                this.showSegmentSheet = false;
+                this.selectedSegment = null;
               }
             })
         }
@@ -3214,13 +3312,23 @@ struct Article {
   private RootCommentSheet(): void {
     Column() {
       Column({ space: 12 }) {
-        Text('评论')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-        Text(`${this.detail?.commentCount ?? 0} 条评论`)
-          .fontSize(12)
-          .fontColor($r('app.color.text_secondary'))
+        if (this.currentSegmentForComments !== null) {
+          Text('划线评论')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+          Text(`「${this.currentSegmentForComments.displayText}」`)
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+        } else {
+          Text('评论')
+            .fontSize(20)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+          Text(`${this.detail?.commentCount ?? 0} 条评论`)
+            .fontSize(12)
+            .fontColor($r('app.color.text_secondary'))
+        }
 
         Row({ space: 10 }) {
           if (this.rootCommentSortOrder === 'score') {
@@ -3327,6 +3435,183 @@ focusControl.requestFocus('rootCommentInput');
     .width('100%')
     .height('100%')
     .backgroundColor(ThemeColors.articleBackground(this.oledBlack, this.isDark))
+  }
+
+  /** 划线片段弹窗：对齐安卓 SegmentActionSheet。标题「划线片段」+ 原句引用 + 赞/评论/复制三按钮 */
+  @Builder
+  private SegmentActionSheet(): void {
+    Column() {
+      Column({ space: 14 }) {
+        Text('划线片段')
+          .fontSize(18)
+          .fontWeight(FontWeight.Bold)
+          .fontColor($r('app.color.text_primary'))
+          .alignSelf(ItemAlign.Start)
+
+        if (this.selectedSegment !== null) {
+          Column() {
+            Text(`「${this.selectedSegment?.displayText ?? ''}」`)
+              .fontSize(15)
+              .lineHeight(24)
+              .fontColor($r('app.color.text_primary'))
+          }
+          .width('100%')
+          .padding(14)
+          .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+          .borderRadius(12)
+        }
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+      .padding({ left: 20, right: 20, top: 18, bottom: 10 })
+
+      Row({ space: 8 }) {
+        Button() {
+          Row({ space: 6 }) {
+            Image($r('app.media.ic_agree'))
+              .width(20)
+              .height(20)
+              .fillColor(this.selectedSegment?.isLike === true ? $r('app.color.action_text') : $r('app.color.text_secondary'))
+            Text(`${this.selectedSegment?.likeCount ?? 0}`)
+              .fontSize(14)
+              .fontColor(this.selectedSegment?.isLike === true ? $r('app.color.action_text') : $r('app.color.text_secondary'))
+          }
+        }
+        .height(44)
+        .padding({ left: 16, right: 16 })
+        .borderRadius(22)
+        .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+        .onClick(() => {
+          this.toggleSegmentLike();
+        })
+
+        Button() {
+          Row({ space: 6 }) {
+            Image($r('app.media.ic_comment'))
+              .width(20)
+              .height(20)
+              .fillColor($r('app.color.text_secondary'))
+            Text(`${this.selectedSegment?.commentCount ?? 0}`)
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+          }
+        }
+        .height(44)
+        .padding({ left: 16, right: 16 })
+        .borderRadius(22)
+        .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+        .onClick(() => {
+          this.openSegmentComments();
+        })
+
+        Button() {
+          Row({ space: 6 }) {
+            Image($r('app.media.ic_clipboard'))
+              .width(20)
+              .height(20)
+              .fillColor($r('app.color.text_secondary'))
+            Text('复制')
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+          }
+        }
+        .height(44)
+        .padding({ left: 16, right: 16 })
+        .borderRadius(22)
+        .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+        .onClick(() => {
+          this.copySegmentText();
+        })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+      .padding({ left: 20, right: 20, bottom: 28 })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(ThemeColors.articleBackground(this.oledBlack, this.isDark))
+  }
+
+  private buildSegmentJson(): string | undefined {
+    const detail = this.detail;
+    if (detail === undefined || detail.allowSegmentInteraction !== true) {
+      return undefined;
+    }
+    const segmentInfos = detail.segmentInfos;
+    if (segmentInfos === undefined || segmentInfos.length === 0) {
+      return undefined;
+    }
+    const payload: SegmentInjectionPayload = {
+      allow: true,
+      sourceUrl: detail.browserUrl,
+      contentId: detail.target.id,
+      contentType: detail.target.kind,
+      paragraphs: segmentInfos
+    };
+    return JSON.stringify(payload);
+  }
+
+  private async toggleSegmentLike(): Promise<void> {
+    const seg = this.selectedSegment;
+    const detail = this.detail;
+    if (seg === null || detail === undefined || this.segmentLiking) {
+      return;
+    }
+    const context = this.context();
+    const url = `https://www.zhihu.com/api/v4/reaction/${seg.contentType}s/${seg.contentId}/segment_reaction`;
+    const segIdsJoined = seg.segIds.join(',');
+    this.segmentLiking = true;
+    try {
+      if (seg.isLike) {
+        const unlikeBody: SegmentUnlikeBody = { seg_ids: segIdsJoined };
+        await ZhihuApi.deleteJson(context, url, { signed: true, body: JSON.stringify(unlikeBody) });
+      } else {
+        const likeBody: SegmentLikeBody = {
+          seg_id: segIdsJoined,
+          content: seg.displayText,
+          position: {
+            start: { paragraph_id: seg.paragraphId, offset: seg.startOffset },
+            end: { paragraph_id: seg.paragraphId, offset: seg.endOffset }
+          }
+        };
+        await ZhihuApi.postJson(context, url, { signed: true, body: JSON.stringify(likeBody) });
+      }
+      const nowLiked = !seg.isLike;
+      const delta = nowLiked ? 1 : -1;
+      this.selectedSegment = {
+        id: seg.id,
+        likeCount: Math.max(0, seg.likeCount + delta),
+        commentCount: seg.commentCount,
+        isLike: nowLiked,
+        displayText: seg.displayText,
+        contentId: seg.contentId,
+        contentType: seg.contentType,
+        paragraphId: seg.paragraphId,
+        startOffset: seg.startOffset,
+        endOffset: seg.endOffset,
+        segIds: seg.segIds
+      };
+      this.showToast(nowLiked ? '已赞' : '已取消赞');
+    } catch (e) {
+      this.showToast('操作失败，请重试');
+    } finally {
+      this.segmentLiking = false;
+    }
+  }
+
+  private copySegmentText(): void {
+    const seg = this.selectedSegment;
+    if (seg === null) {
+      return;
+    }
+    try {
+      const pb = pasteboard.getSystemPasteboard();
+      const pasteData = pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, seg.displayText);
+      pb.setData(pasteData);
+      this.showToast('已复制划线内容');
+    } catch (e) {
+      this.showToast('复制失败');
+    }
   }
 
   @Builder

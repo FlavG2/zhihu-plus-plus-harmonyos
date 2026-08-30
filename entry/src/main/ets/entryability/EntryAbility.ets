@@ -1,6 +1,7 @@
 import { AbilityConstant, Configuration, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
+import { webview } from '@kit.ArkWeb';
 import { AppearanceSettingsRepository } from '../services/AppearanceSettingsRepository';
 
 const DOMAIN = 0x0000;
@@ -8,6 +9,40 @@ const TAG = 'ZhihuPlusNext';
 const TOP_SAFE_AREA_KEY = 'topSafeAreaVp';
 const BOTTOM_SAFE_AREA_KEY = 'bottomSafeAreaVp';
 const PENDING_DEEP_LINK_KEY = 'pendingDeepLink';
+
+/**
+ * 知乎图床（zhimg 严格节点）校验 User-Agent，ArkWeb 子资源 <img> 请求默认 UA 会被 403 裂图。
+ * 关键：webview.WebviewController.setCustomUserAgent() 按 SDK 注释
+ * "only takes effect in the current web context"，只作用于主文档、不传播到 <img> 子资源，
+ * 因此它对详情页裂图无效。改用它按域名生效的 setUserAgentForHosts()（API 20+）：
+ * 对该 host 发起的所有请求（含 <img> 子资源）都会带上指定 UA，从而绕过图床校验。
+ * 这样无需预拉取 / 拦截 / base64 注入，页面保持干净 HTML，结构上不可能白屏。
+ */
+const ZHIHU_IMAGE_HOSTS: string[] = [
+  'pic.zhimg.com',
+  'pic1.zhimg.com',
+  'pic2.zhimg.com',
+  'pic3.zhimg.com',
+  'pic4.zhimg.com',
+  'picx.zhimg.com',
+  'picx1.zhimg.com',
+  'picx2.zhimg.com',
+  'picx3.zhimg.com',
+  'picx4.zhimg.com',
+  'zhimg.com'
+];
+
+const MOBILE_UA =
+  'Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
+
+function applyZhihuImageUserAgent(): void {
+  try {
+    webview.WebviewController.setUserAgentForHosts(MOBILE_UA, ZHIHU_IMAGE_HOSTS);
+    hilog.info(DOMAIN, TAG, 'Zhihu image UA registered for %{public}d hosts.', ZHIHU_IMAGE_HOSTS.length);
+  } catch (error) {
+    hilog.error(DOMAIN, TAG, 'Failed to register zhihu image UA: %{public}s', JSON.stringify(error));
+  }
+}
 
 function isZhihuLink(uri: string | undefined): string | undefined {
   if (!uri || uri.length === 0) {
@@ -23,6 +58,8 @@ function isZhihuLink(uri: string | undefined): string | undefined {
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    // 必须在任何 Web 组件创建之前注册，否则已发起的子资源请求拿不到该 UA。
+    applyZhihuImageUserAgent();
     try {
       AppearanceSettingsRepository.load(this.context);
     } catch (error) {

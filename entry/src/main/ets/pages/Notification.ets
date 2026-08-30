@@ -2,7 +2,7 @@ import { router, promptAction } from '@kit.ArkUI';
 import common from '@ohos.app.ability.common';
 import { NotificationService, NOTIFICATION_CATEGORIES } from '../services/NotificationService';
 import { ZhihuNotification, ZhihuNotificationCategory, ZhihuNotificationInvitation } from '../models/ZhihuNotificationModels';
-import { resolveZhihuContent } from '../services/ZhihuContentResolver';
+import { resolveZhihuContent, resolveNotificationEntryUrl } from '../services/ZhihuContentResolver';
 import { serializeZhihuContentTarget, ZhihuCommentableTarget } from '../models/ZhihuContentModels';
 import { ThemeColors } from '../services/ThemeColors';
 
@@ -162,11 +162,18 @@ struct NotificationPage {
     }
     if (resolvedTarget === undefined) {
       if (candidates.length > 0) {
-        const raw = candidates[0];
-        promptAction.showToast({
-          message: `未识别通知链接: ${raw.length > 48 ? raw.slice(0, 48) + '…' : raw}`
-        });
-        router.pushUrl({ url: 'pages/WebContent', params: { url: raw } });
+        // 通知时间线入口（官方账号消息 / 系统消息等）：原生跳动，不进 WebView
+        const entryUrl = candidates.find((l) => resolveNotificationEntryUrl(l) !== undefined);
+        if (entryUrl !== undefined) {
+          const entry = resolveNotificationEntryUrl(entryUrl)!;
+          router.pushUrl({
+            url: 'pages/NotificationTimeline',
+            params: { entryName: entry.entryName, title: entry.title }
+          });
+          return;
+        }
+        // 系统消息 / 未识别通知：不跳转网页，提示暂不支持
+        promptAction.showToast({ message: '暂不支持此消息' });
       }
       return;
     }
@@ -252,116 +259,123 @@ struct NotificationPage {
   }
 
   build() {
-    Column() {
+    List() {
       // ---- 顶部标题栏：[‹] 消息 ............ [全部已读] [设置] ----
-      Row() {
-        Text('‹')
-          .fontSize(26)
-          .fontColor($r('app.color.text_primary'))
-          .onClick(() => {
-            router.back({ url: '' });
-          })
-          .padding({ left: 8, right: 4 })
+      ListItem() {
+        Row() {
+          Text('‹')
+            .fontSize(26)
+            .fontColor($r('app.color.text_primary'))
+            .onClick(() => {
+              router.back({ url: '' });
+            })
+            .padding({ left: 8, right: 4 })
 
-        Text('消息')
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
+          Text('消息')
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor($r('app.color.text_primary'))
+            .layoutWeight(1)
 
-        if (this.totalUnread > 0) {
-          Text(this.markingRead ? '已读中...' : '全部已读')
+          if (this.totalUnread > 0) {
+            Text(this.markingRead ? '已读中...' : '全部已读')
+              .fontSize(14)
+              .fontColor($r('app.color.action_text'))
+              .onClick(() => this.markAllRead())
+              .padding({ left: 8, right: 8 })
+          }
+
+          Text('设置')
             .fontSize(14)
-            .fontColor($r('app.color.action_text'))
-            .onClick(() => this.markAllRead())
+            .fontColor($r('app.color.text_secondary'))
+            .onClick(() => {
+              router.pushUrl({ url: 'pages/NotificationSettings' });
+            })
             .padding({ left: 8, right: 8 })
         }
-
-        Text('设置')
-          .fontSize(14)
-          .fontColor($r('app.color.text_secondary'))
-          .onClick(() => {
-            router.pushUrl({ url: 'pages/NotificationSettings' });
-          })
-          .padding({ left: 8, right: 8 })
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+        .padding({ left: 8, right: 8, top: this.topSafeAreaVp + 12, bottom: 12 })
       }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-      .padding({ left: 8, right: 8, top: this.topSafeAreaVp + 12, bottom: 12 })
 
       // ---- 分类图标栏（4 个，对齐安卓 NotificationCategoryRow）→ 点击跳转分类详情页 ----
-      Row() {
-        ForEach(this.categories, (cat: ZhihuNotificationCategory, idx: number) => {
-          this.CategoryButton(cat, idx);
-        }, (cat: ZhihuNotificationCategory) => cat.key)
+      ListItem() {
+        Row() {
+          ForEach(this.categories, (cat: ZhihuNotificationCategory, idx: number) => {
+            this.CategoryButton(cat, idx);
+          }, (cat: ZhihuNotificationCategory) => cat.key)
+        }
+        .width('100%')
+        .padding({ left: 8, right: 8, top: 8, bottom: 12 })
+        .justifyContent(FlexAlign.SpaceEvenly)
       }
-      .width('100%')
-      .padding({ left: 8, right: 8, top: 8, bottom: 12 })
-      .justifyContent(FlexAlign.SpaceEvenly)
 
       // ---- 邀请回答入口（对齐安卓 NotificationInvitationRow：写死始终渲染，column_head 为空也显示，内部走兜底）----
-      this.InvitationEntry(this.invitation);
+      ListItem() {
+        this.InvitationEntry(this.invitation);
+      }
 
       // ---- 「通知」分组标题行（安卓消息列表上方分隔）----
-      Row() {
-        Text('通知')
-          .fontSize(13)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.text_secondary'))
-          .margin({ left: 16, right: 8 })
-      }
-      .width('100%')
-      .padding({ top: 8, bottom: 4 })
-      .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
-
-      Divider()
-        .color($r('app.color.card_border'))
+      ListItem() {
+        Row() {
+          Text('通知')
+            .fontSize(13)
+            .fontWeight(FontWeight.Medium)
+            .fontColor($r('app.color.text_secondary'))
+            .margin({ left: 16, right: 8 })
+        }
         .width('100%')
+        .padding({ top: 8, bottom: 4 })
+        .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+      }
+
+      ListItem() {
+        Divider()
+          .color($r('app.color.card_border'))
+          .width('100%')
+      }
 
       // ---- 来源会话列表（对齐安卓 NotificationConversationRow）----
       if (this.error.length > 0) {
-        Column() {
-          Text(this.error)
-            .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
-          Button('重试')
-            .margin({ top: 12 })
-            .onClick(() => this.loadOverview(true))
+        ListItem() {
+          Column() {
+            Text(this.error)
+              .fontSize(14)
+              .fontColor($r('app.color.text_secondary'))
+            Button('重试')
+              .margin({ top: 12 })
+              .onClick(() => this.loadOverview(true))
+          }
+          .width('100%')
+          .padding({ top: 80, bottom: 80 })
+          .alignItems(HorizontalAlign.Center)
         }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
       } else {
-        List() {
-          ForEach(this.items, (item: ZhihuNotification) => {
-            ListItem() {
-              this.ConversationRow(item);
-            }
-            .onClick(() => this.openNotification(item))
-          }, (item: ZhihuNotification) => item.id)
+        ForEach(this.items, (item: ZhihuNotification) => {
+          ListItem() {
+            this.ConversationRow(item);
+          }
+          .onClick(() => this.openNotification(item))
+        }, (item: ZhihuNotification) => item.id)
 
-          if (this.loading) {
-            ListItem() {
-              Row() {
-                Text('加载中...')
-                  .fontSize(13)
-                  .fontColor($r('app.color.text_secondary'))
-              }
-              .width('100%')
-              .justifyContent(FlexAlign.Center)
-              .padding(16)
+        if (this.loading) {
+          ListItem() {
+            Row() {
+              Text('加载中...')
+                .fontSize(13)
+                .fontColor($r('app.color.text_secondary'))
             }
+            .width('100%')
+            .justifyContent(FlexAlign.Center)
+            .padding(16)
           }
         }
-        .width('100%')
-        .layoutWeight(1)
-        .onReachEnd(() => this.loadMore())
       }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+    .onReachEnd(() => this.loadMore())
   }
 
   @Builder

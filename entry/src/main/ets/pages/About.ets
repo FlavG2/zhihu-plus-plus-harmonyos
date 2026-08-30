@@ -1,4 +1,5 @@
 import { router } from '@kit.ArkUI';
+import { bundleManager } from '@kit.AbilityKit';
 import common from '@ohos.app.ability.common';
 import { ThemeColors } from '../services/ThemeColors';
 import { APP_VERSION_NAME } from '../generated/BuildInfo';
@@ -9,6 +10,22 @@ struct AboutPage {
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
   @StorageLink('oledBlack') private oledBlack: boolean = false;
   @StorageLink('isDark') private isDark: boolean = false;
+  // 运行时从已安装包读取版本号（单一真源 app.json5）；读取失败回退编译期常量
+  private appVersionName: string = APP_VERSION_NAME;
+
+  aboutToAppear(): void {
+    try {
+      const info = bundleManager.getBundleInfoForSelfSync(
+        bundleManager.BundleFlag.GET_BUNDLE_INFO_WITH_APPLICATION
+      );
+      const v = info.versionName;
+      if (v !== undefined && v.length > 0) {
+        this.appVersionName = v;
+      }
+    } catch (_) {
+      // 读取失败则保留编译期常量 APP_VERSION_NAME
+    }
+  }
 
   private openLicenses(): void {
     router.pushUrl({ url: 'pages/Licenses' });
@@ -72,7 +89,7 @@ struct AboutPage {
                 .fontSize(16)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
-              Text(`版本号: ${APP_VERSION_NAME}`)
+              Text(`版本号: ${this.appVersionName}`)
                 .fontSize(13)
                 .fontColor($r('app.color.text_secondary'))
             }

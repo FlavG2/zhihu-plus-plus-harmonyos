@@ -1,4 +1,5 @@
 import common from '@ohos.app.ability.common';
+import { hilog } from '@kit.PerformanceAnalysisKit';
 import { webview } from '@kit.ArkWeb';
 import { AppearanceThemeMode } from '../services/AppearanceSettingsRepository';
 import { ThemeColors } from '../services/ThemeColors';
@@ -9,6 +10,7 @@ import {
   ReaderStyle,
   resolveZhihuThemeMode,
   ZhihuRichWebEvent,
+  ZhihuSegmentTapInfo,
   ZhihuWebScript,
   ZhihuWebBridgeHost
 } from '../utils/ZhihuWebBridge';
@@ -37,6 +39,7 @@ export struct ZhihuRichWeb {
   onScrollChange?: (topPx: number) => void;
   onSummaryBoundsChange?: (bottomPx: number) => void;
   onHorizontalSwipe?: (state: string, dx: number) => void;
+  onSegmentTap?: (seg: ZhihuSegmentTapInfo) => void;
 
   private readonly controller: webview.WebviewController = new webview.WebviewController();
   private readonly bridgeHost: ZhihuWebBridgeHost = new ZhihuWebBridgeHost((event: ZhihuRichWebEvent) => {
@@ -82,6 +85,10 @@ export struct ZhihuRichWeb {
     }
     if (event.type === 'copyMath') {
       this.onCopyMath?.(event.latex);
+      return;
+    }
+    if (event.type === 'segment') {
+      this.onSegmentTap?.(event as ZhihuSegmentTapInfo);
       return;
     }
     if (event.type === 'video') {
@@ -169,6 +176,11 @@ export struct ZhihuRichWeb {
       .onPageEnd(() => {
         this.contentLoaded = true;
         this.applyTheme();
+      })
+      // 纯诊断：仅记录子资源 HTTP 错误（不改变、不拦截请求），用于确认图床是否仍返回 403。
+      .onHttpErrorReceive((event: OnHttpErrorReceiveEvent) => {
+        hilog.error(0x0000, 'ZhihuImg', 'httpErr code=%{public}d url=%{public}s',
+          event.response.getResponseCode(), event.request.getRequestUrl());
       })
       .width('100%')
       .backgroundColor(ThemeColors.articleBackground(this.oledBlack, this.isDark))
