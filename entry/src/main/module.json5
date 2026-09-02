@@ -53,7 +53,9 @@
         "description": "$string:EntryAbility_desc",
         "icon": "$media:icon",
         "label": "$string:app_name",
-        "startWindowIcon": "$media:startIcon",
+        // 原为模板自带的 startIcon.png（144x144 的 DevEco 默认图标），导致开屏显示的是默认图标。
+        // 改为指向本应用图标 icon.png（1024x1024），系统会自行缩放为开屏所需尺寸。
+        "startWindowIcon": "$media:icon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
         "skills": [

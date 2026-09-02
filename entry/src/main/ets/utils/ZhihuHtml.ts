@@ -113,6 +113,20 @@ export function htmlToDataUrl(html: string): string {
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
+/**
+ * 把一段 <style> 注入 HTML：优先插到 <head> 之后，没有 head 则置于文档开头。
+ * 用途：把阅读体验 CSS 变量随文档一起交给 WebView 解析，首帧即生效，
+ * 避免「渲染完再由脚本改值」造成的字号跳动。
+ */
+export function injectStyleIntoHtml(html: string, style: string): string {
+  const headMatch = html.match(/<head\b[^>]*>/i);
+  if (headMatch !== null && headMatch.index !== undefined) {
+    const end: number = headMatch.index + headMatch[0].length;
+    return html.substring(0, end) + style + html.substring(end);
+  }
+  return style + html;
+}
+
 export function normalizeRichContentHtml(html: string): string {
   if (html.trim().length === 0) {
     return html;

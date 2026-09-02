@@ -5,7 +5,7 @@ import { FeedFilterService } from '../services/FeedFilterService';
 import { BlockHistoryRepository } from '../services/BlockHistoryRepository';
 import { FilterSettingsRepository, FILTER_KEYS } from '../services/FilterSettingsRepository';
 import { pasteboard } from '@kit.BasicServicesKit';
-import { HdsTabs, HdsTabsController, hdsMaterial } from '@kit.UIDesignKit';
+import { HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
 import { serializeZhihuContentTarget, ZhihuCommentableTarget } from '../models/ZhihuContentModels';
 import { DailyService, DailyStoriesPage, DailyStory } from '../services/DailyService';
 import { DEFAULT_SESSION_SNAPSHOT, HomeFeedItem, HomeFeedTopic, SessionSnapshot } from '../models/ZhihuModels';
@@ -18,6 +18,7 @@ import { ZhihuSessionRepository } from '../services/ZhihuSessionRepository';
 import { AppearanceSettingsRepository, APPEARANCE_KEYS, AppearanceThemeMode, AmbientBlurIntensity,
   MATERIAL_LEVEL_EXQUISITE, MATERIAL_LEVEL_GENTLE, MATERIAL_LEVEL_SMOOTH, MATERIAL_LEVEL_ADAPTIVE } from '../services/AppearanceSettingsRepository';
 import { ThemeColors } from '../services/ThemeColors';
+import { ZhihuMaterial } from '../services/ZhihuMaterial';
 import { FollowFeedService, FollowFeedTab } from '../services/FollowFeedService';
 import { RecentMomentsService, FollowingUserItem } from '../services/RecentMomentsService';
 import { FollowFilterRepository, FollowFilterCategory } from '../services/FollowFilterRepository';
@@ -59,7 +60,7 @@ interface FollowFeedTabOption {
 const TOP_BAR_BASE_PADDING: number = 10;
 const HOME_TOP_BAR_SCROLL_INSET: number = 94;
 const DEFAULT_TOP_BAR_SCROLL_INSET: number = 96;
-const FOLLOW_TOP_BAR_SCROLL_INSET: number = 150;
+const FOLLOW_TOP_BAR_SCROLL_INSET: number = 96;
 const BOTTOM_PORTAL_BAR_CONTENT_INSET: number = 84;
 const BOTTOM_PORTAL_BAR_BASE_OFFSET: number = 8;
 const THEME_MODE_OPTIONS: ThemeModeOptionItem[] = [
@@ -117,6 +118,32 @@ struct Index {
   @StorageProp('themeMode') private themeMode: AppearanceThemeMode = 'system';
   @StorageProp('ambientBlur') private ambientBlur: AmbientBlurIntensity = 'adaptive';
   @StorageProp('materialLevel') private materialLevel: number = MATERIAL_LEVEL_ADAPTIVE;
+  // 软尺寸：由 DesignMetrics 按「官方基线 × 用户倍率」算出后写入 AppStorage。
+  // 默认值与官方规范一致，故首帧视觉不变；用户调整字号/密度后这些页面会自动重排。
+  @StorageProp('fontHeading') private fontHeading: string = '20fp';
+  @StorageProp('fontBody') private fontBody: string = '16fp';
+  @StorageProp('fontSecondary') private fontSecondary: string = '14fp';
+  @StorageProp('fontCaption') private fontCaption: string = '12fp';
+  @StorageProp('spaceXs') private spaceXs: number = 4;
+  @StorageProp('spaceSm') private spaceSm: number = 8;
+  @StorageProp('spaceMd') private spaceMd: number = 12;
+  @StorageProp('cardPadding') private cardPadding: number = 16;
+  @StorageProp('cardRadius') private cardRadius: number = 16;
+  // 软尺寸（续）：补齐 Index 试点需要的其余 token（默认值=官方基线，首帧视觉不变）
+  @StorageProp('fontDisplay') private fontDisplay: string = '30fp';
+  @StorageProp('fontSubhead') private fontSubhead: string = '18fp';
+  @StorageProp('fontMeta') private fontMeta: string = '13fp';
+  @StorageProp('fontBadge') private fontBadge: string = '10fp';
+  @StorageProp('fontSymbol') private fontSymbol: string = '24fp';
+  @StorageProp('fontBodyLg') private fontBodyLg: string = '17fp';
+  @StorageProp('fontMini') private fontMini: string = '11fp';
+  @StorageProp('fontLargeTitle') private fontLargeTitle: string = '26fp';
+  @StorageProp('fontTitle') private fontTitle: string = '22fp';
+  @StorageProp('fontBodySm') private fontBodySm: string = '15fp';
+  @StorageProp('spaceLg') private spaceLg: number = 24;
+  @StorageProp('pagePadding') private pagePadding: number = 20;
+  @StorageProp('buttonRadius') private buttonRadius: number = 20;
+  @StorageProp('pillRadius') private pillRadius: number = 18;
   @State private selectedPortalTab: AppPortalKey = 'home';
   @State private dailySections: DailySection[] = [];
   @State private dailyLoading: boolean = false;
@@ -162,6 +189,9 @@ struct Index {
   @StorageLink('isDark') private isDark: boolean = false;
   @StorageLink('showThumbnail') private showThumbnail: boolean = true;
   @StorageLink('showRefreshFab') private showRefreshFab: boolean = false;
+  @StorageLink('autoHideRefreshFab') private autoHideRefreshFab: boolean = false;
+  @State private refreshFabOpacity: number = 1;
+  private lastFeedScrollTop: number = 0;
   @State private followTab: FollowFeedTab = 'latest';
   @State private followRecommendItems: HomeFeedItem[] = [];
   @State private followRecommendLoading: boolean = false;
@@ -222,6 +252,7 @@ struct Index {
     this.showRecommendBadge = FilterSettingsRepository.getBool(this.context(), FILTER_KEYS.showRecommendBadge, true);
     this.showThumbnail = AppearanceSettingsRepository.getShowThumbnail(this.context());
     this.showRefreshFab = AppearanceSettingsRepository.getShowRefreshFab(this.context());
+    this.autoHideRefreshFab = AppearanceSettingsRepository.getAutoHideRefreshFab(this.context());
     this.loadFollowFilter();
     this.loadLatestDaily();
   }
@@ -331,11 +362,12 @@ struct Index {
       }
       return this.sessionSnapshot.accountName;
     }
+    // 关注页：已登录时按当前子标签显示排序说明，让顶栏与主页齐平
     if (this.selectedPortalTab === 'follow') {
       if (!this.sessionSnapshot.loggedIn) {
         return '登录后查看关注流';
       }
-      return this.followTab === 'featured' ? '关注精选' : '关注最新';
+      return this.followTab === 'latest' ? '时间排序' : '随机推荐';
     }
     if (this.selectedPortalTab === 'hot') {
       if (this.hotLoading && !this.hotHasLoaded) {
@@ -429,11 +461,23 @@ struct Index {
     });
   }
 
-  private openDailyStory(item: DailyStory): void {
-    const nativeTarget = resolveZhihuContent(item.url);
-    if (nativeTarget !== undefined) {
-      this.openNativeArticle(nativeTarget, item.title, item.url);
-      return;
+  private async openDailyStory(item: DailyStory): Promise<void> {
+    // 对齐安卓 DailyScreen：日报自带的是 daily 域名外链，resolveZhihuContent 不认，
+    // 需先拉详情接口、从正文 HTML 抠出 <a class="originUrl"> 的知乎原文链接，再解析走原生。
+    try {
+      const body = await DailyService.getStoryBody(item.id);
+      if (body !== undefined) {
+        const originUrl = DailyService.extractOriginUrl(body);
+        if (originUrl !== undefined) {
+          const nativeTarget = resolveZhihuContent(originUrl);
+          if (nativeTarget !== undefined) {
+            this.openNativeArticle(nativeTarget, item.title, originUrl);
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      // 详情接口异常，退化到网页，不阻断
     }
     this.openWebContent(item.title, item.url, true);
   }
@@ -620,24 +664,13 @@ struct Index {
     return idx >= 0 ? idx : 0;
   }
 
-  private resolveMaterialLevel(level: number): hdsMaterial.MaterialLevel {
-    if (level === MATERIAL_LEVEL_EXQUISITE) {
-      return hdsMaterial.MaterialLevel.EXQUISITE;
-    }
-    if (level === MATERIAL_LEVEL_GENTLE) {
-      return hdsMaterial.MaterialLevel.GENTLE;
-    }
-    if (level === MATERIAL_LEVEL_SMOOTH) {
-      return hdsMaterial.MaterialLevel.SMOOTH;
-    }
-    return hdsMaterial.MaterialLevel.ADAPTIVE;
-  }
 
   private onTabChange(index: number): void {
     this.selectedPortalTab = this.portalKeyFromIndex(index);
     this.hdsTabsController.changeIndex(index);
-    // 切换 Tab 时恢复底部沉浸光感栏（始终从底部重新出现）
+    // 切换 Tab 时恢复底部沉浸光感栏（始终从底部重新出现），并复位刷新 FAB
     this.resetHomeBottomBar();
+    this.resetRefreshFabAutoHide();
     this.showHomeAccountPanel = false;
     if (this.selectedPortalTab === 'home') {
       if (this.homeFeedGuestMode() || this.sessionSnapshot.loggedIn) {
@@ -663,7 +696,7 @@ struct Index {
   @Builder
   private FloatingTab(label: string): void {
     Text(label)
-      .fontSize(14)
+      .fontSize(this.fontSecondary)
       .fontWeight(this.selectedPortalTab === this.labelToTabKey(label) ? FontWeight.Bold : FontWeight.Medium)
       .fontColor(this.selectedPortalTab === this.labelToTabKey(label) ? $r('app.color.tab_selected_text') : $r('app.color.text_secondary'))
   }
@@ -900,8 +933,7 @@ struct Index {
     try {
       const ctx = this.context();
       const page = await HomeFeedService.loadFirstPage(ctx, { guest });
-      FeedFilterService.recordRecommendCounts(ctx, page.items);
-      this.homeItems = FeedFilterService.filterHomeFeed(ctx, page.items);
+      this.homeItems = FeedFilterService.filterHomeFeed(ctx, page.items, true);
       this.homeNextUrl = page.paging.nextUrl;
       this.homeHasLoaded = true;
       HomeFeedService.saveHomeSnapshot(ctx, page.items);
@@ -928,8 +960,7 @@ struct Index {
     this.homeLoadingMore = true;
     try {
       const page = await HomeFeedService.loadNextPage(this.context(), this.homeNextUrl);
-      FeedFilterService.recordRecommendCounts(this.context(), page.items);
-      const newItems = FeedFilterService.filterHomeFeed(this.context(), page.items);
+      const newItems = FeedFilterService.filterHomeFeed(this.context(), page.items, true);
       const existed = new Set<string>(this.homeItems.map((item: HomeFeedItem) => item.id));
       const merged = [...this.homeItems];
       newItems.forEach((item: HomeFeedItem) => {
@@ -1002,6 +1033,7 @@ struct Index {
   private async refreshCurrentTab(): Promise<void> {
     try {
       if (this.selectedPortalTab === 'home') {
+        this.resetRefreshFabAutoHide();
         await this.refreshHomePage();
       } else if (this.selectedPortalTab === 'hot') {
         await this.refreshHotPage();
@@ -1084,6 +1116,12 @@ struct Index {
   }
 
   private handleContentScrollEdge(side: Edge): void {
+    if (side === Edge.Top) {
+      if (this.selectedPortalTab === 'home') {
+        this.resetRefreshFabAutoHide();
+      }
+      return;
+    }
     if (side !== Edge.Bottom) {
       return;
     }
@@ -1188,6 +1226,54 @@ struct Index {
     this.scheduleTopBarSnap();
   }
 
+  // 刷新悬浮按钮滚动显隐：抄 Article 跳转按钮语义（但在 home 页用 Scroller 绝对位置）。
+  // 由各 Tab 的 Scroll.onWillScroll 调用（不依赖 updateTopBarOnScroll，避免被门控挡）。
+  // 「scrollingDown」= 绝对滚动位置增大 = 内容往上走、正在往下阅读 → 淡出按钮；
+  // 下滑回拉 / atTop / 手动刷新 / 切 Tab → 淡入。
+  private updateRefreshFabAutoHideOnScroll(): void {
+    if (!this.showRefreshFab) {
+      return;
+    }
+    let scroller: Scroller | null = null;
+    if (this.selectedPortalTab === 'home') {
+      scroller = this.homeScroller;
+    } else if (this.selectedPortalTab === 'follow') {
+      scroller = this.followScroller;
+    } else if (this.selectedPortalTab === 'hot') {
+      scroller = this.hotScroller;
+    } else if (this.selectedPortalTab === 'daily') {
+      scroller = this.dailyScroller;
+    }
+    if (scroller === null) {
+      return;
+    }
+    // currentOffset() 仅在组件挂载后有值，避免 aboutToAppear 等阶段调用 NPE
+    let topPx: number = 0;
+    try {
+      const off = scroller.currentOffset();
+      topPx = typeof off.yOffset === 'number' ? off.yOffset : 0;
+    } catch (_) {
+      topPx = 0;
+    }
+    if (topPx < 0) {
+      topPx = 0;
+    }
+    const delta = topPx - this.lastFeedScrollTop;
+    this.lastFeedScrollTop = topPx;
+    const atTop = topPx <= 1;
+    const scrollingDown = delta > 0; // 绝对位置增大 → 内容上移阅读中 → 淡出
+    const target = (!this.autoHideRefreshFab || !scrollingDown || atTop) ? 1 : 0;
+    if (target !== this.refreshFabOpacity) {
+      this.refreshFabOpacity = target;
+    }
+  }
+
+  // 刷新 / 回顶 / 切 Tab 时复位累计位置与按钮可见性
+  private resetRefreshFabAutoHide(): void {
+    this.lastFeedScrollTop = 0;
+    this.refreshFabOpacity = 1;
+  }
+
   private scheduleTopBarSnap(): void {
     if (this.topBarSnapTimer >= 0) {
       clearTimeout(this.topBarSnapTimer);
@@ -1264,7 +1350,7 @@ struct Index {
             Column()
               .width(196)
               .height(48)
-              .borderRadius(24)
+              .borderRadius(this.spaceLg)
               .backgroundColor('#01FFFFFF')
 
             Blank()
@@ -1273,19 +1359,17 @@ struct Index {
             Column()
               .width(48)
               .height(48)
-              .borderRadius(24)
+              .borderRadius(this.spaceLg)
               .backgroundColor('#01FFFFFF')
           }
           .width('100%')
           .padding({ left: 4, right: 4, top: 3, bottom: 3 })
 
-          Row({ space: 12 }) {
+          Row({ space: this.spaceMd }) {
             Row({ space: 10 }) {
-              Image($r('app.media.ic_search'))
-                .width(17)
-                .height(17)
-                .fillColor($r('app.color.text_secondary'))
-                .renderMode(ImageRenderMode.Template)
+              SymbolGlyph($r('sys.symbol.magnifyingglass'))
+                .fontSize(this.fontBodyLg)
+                .fontColor([$r('app.color.text_secondary')])
             }
             .layoutWeight(1)
             .height(46)
@@ -1308,12 +1392,12 @@ struct Index {
                   .width(36)
                   .height(36)
                   .objectFit(ImageFit.Cover)
-                  .borderRadius(18)
+                  .borderRadius(this.pillRadius)
                   .clip(true)
               } else {
                 Column() {
                   Text(this.sessionSnapshot.loggedIn ? this.sessionSnapshot.accountName.slice(0, 1) : '我')
-                    .fontSize(14)
+                    .fontSize(this.fontSecondary)
                     .fontWeight(FontWeight.Bold)
                     .fontColor($r('app.color.action_text'))
                 }
@@ -1322,17 +1406,18 @@ struct Index {
                 .justifyContent(FlexAlign.Center)
                 .alignItems(HorizontalAlign.Center)
                 .backgroundColor($r('app.color.action_background'))
-                .borderRadius(18)
+                .borderRadius(this.pillRadius)
               }
 
-              if (this.sessionSnapshot.loggedIn) {
-                Column()
-                  .width(8)
-                  .height(8)
-                  .backgroundColor('#FF5A5F')
-                  .borderRadius(4)
-                  .margin({ top: 1, right: 1 })
-              }
+              // 红点暂移除（已登录就显示的逻辑已废弃，等接通知全局未读状态再启用）
+              // if (this.sessionSnapshot.loggedIn) {
+              //   Column()
+              //     .width(8)
+              //     .height(8)
+              //     .backgroundColor('#FF5A5F')
+              //     .borderRadius(this.spaceXs)
+              //     .margin({ top: 1, right: 1 })
+              // }
             }
             .width(46)
             .height(46)
@@ -1355,7 +1440,7 @@ struct Index {
         .width('100%')
         .padding({ left: 10, right: 10, top: 8, bottom: 8 })
       }
-      .backgroundColor($r('app.color.glass_top_bar_background'))
+      .backgroundColor(ThemeColors.oledBlack(this.oledBlack, this.isDark, $r('app.color.glass_top_bar_background')))
       .border({
         width: {
           bottom: 1
@@ -1369,41 +1454,38 @@ struct Index {
       .opacity(this.topBarOffsetY > 0 ? Math.max(0, 1 - this.topBarOffsetY / this.topBarHideDistance) : 1)
     } else {
       Stack() {
-        Column({ space: 12 }) {
-          Row({ space: 8 }) {
-            Column({ space: 2 }) {
-              Text(this.portalTitle(this.selectedPortalTab))
-                .fontSize(24)
-                .fontWeight(FontWeight.Bold)
-                .fontColor($r('app.color.text_primary'))
+        Row({ space: this.spaceSm }) {
+          Column({ space: 2 }) {
+            Text(this.portalTitle(this.selectedPortalTab))
+              .fontSize(this.fontSymbol)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_primary'))
 
+            if (this.topBarSubtitle().length > 0) {
               Text(this.topBarSubtitle())
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .fontColor($r('app.color.text_secondary'))
             }
-            .layoutWeight(1)
-            .alignItems(HorizontalAlign.Start)
-
-            if (this.selectedPortalTab === 'follow' && this.sessionSnapshot.loggedIn) {
-              this.FollowFilterButton()
-            }
           }
-          .width('100%')
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
 
           if (this.selectedPortalTab === 'follow' && this.sessionSnapshot.loggedIn) {
-            Row({ space: 8 }) {
+            Row({ space: this.spaceSm }) {
               ForEach(FOLLOW_FEED_TABS, (option: FollowFeedTabOption) => {
                 this.FollowTabChip(option);
               }, (option: FollowFeedTabOption) => option.key)
+
+              this.FollowFilterButton()
             }
-            .width('100%')
+            .alignItems(VerticalAlign.Center)
           }
         }
-        .alignItems(HorizontalAlign.Start)
+        .alignItems(VerticalAlign.Center)
         .width('100%')
         .padding({ left: 16, right: 16, top: 10, bottom: 10 })
       }
-      .backgroundColor($r('app.color.glass_top_bar_background'))
+      .backgroundColor(ThemeColors.oledBlack(this.oledBlack, this.isDark, $r('app.color.glass_top_bar_background')))
       .border({
         width: {
           bottom: 1
@@ -1420,19 +1502,18 @@ struct Index {
 
   // 账号区右上角的小圆形图标按钮（二维码、退出登录）
   @Builder
-  private AccountIconButton(icon: string, accessibilityLabel: string, action: () => void, color?: ResourceColor): void {
+  private AccountIconButton(icon: Resource, accessibilityLabel: string, action: () => void, color?: ResourceColor): void {
     Column() {
-      Text(icon)
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(color ?? $r('app.color.action_text'))
+      SymbolGlyph(icon)
+        .fontSize(this.fontSubhead)
+        .fontColor([color ?? $r('app.color.action_text')])
     }
     .width(40)
     .height(40)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .backgroundColor($r('app.color.action_background'))
-    .borderRadius(20)
+    .borderRadius(this.buttonRadius)
     .accessibilityText(accessibilityLabel)
     .onClick(() => {
       action();
@@ -1445,20 +1526,19 @@ struct Index {
     Column({ space: 10 }) {
       // 圆形实心图标（接近安卓风格：浅蓝底 + 蓝色图标）
       Column() {
-        Text(this.quickIconForLabel(label))
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor('#1976D2')
+        SymbolGlyph(this.quickIconForLabel(label))
+          .fontSize(this.fontHeading)
+          .fontColor(['#1976D2'])
       }
       .width(40)
       .height(40)
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
       .backgroundColor('#E3F2FD')
-      .borderRadius(20)
+      .borderRadius(this.buttonRadius)
 
       Text(label)
-        .fontSize(12)
+        .fontSize(this.fontCaption)
         .fontColor($r('app.color.text_primary'))
     }
     .layoutWeight(1)
@@ -1467,7 +1547,7 @@ struct Index {
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
     .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-    .borderRadius(16)
+    .borderRadius(this.cardRadius)
     .border({
       width: 1,
       color: $r('app.color.card_border')
@@ -1477,36 +1557,35 @@ struct Index {
     })
   }
 
-  private quickIconForLabel(label: string): string {
+  private quickIconForLabel(label: string): Resource {
     if (label === '收藏夹') {
-      return '★';
+      return $r('sys.symbol.star_fill');
     }
     if (label === '关注订阅') {
-      return '◉';
+      return $r('sys.symbol.record_circle');
     }
     if (label === '通知') {
-      return '♪';
+      return $r('sys.symbol.bell_fill');
     }
     if (label === '浏览历史') {
-      return '↻';
+      return $r('sys.symbol.clock');
     }
-    return '•';
+    return $r('sys.symbol.star_fill');
   }
 
   // 设置项左侧的圆形小图标（外观/推荐过滤/系统与更新）
   @Builder
-  private SettingIcon(icon: string): void {
+  private SettingIcon(icon: Resource): void {
     Column() {
-      Text(icon)
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
+      SymbolGlyph(icon)
+        .fontSize(this.fontSubhead)
+        .fontColor([$r('app.color.text_primary')])
     }
     .width(36)
     .height(36)
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
-    .borderRadius(18)
+    .borderRadius(this.pillRadius)
     .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
     .border({
       width: 1,
@@ -1536,7 +1615,7 @@ struct Index {
             } else {
               Column() {
                 Text(this.sessionSnapshot.loggedIn ? this.sessionSnapshot.accountName.slice(0, 1) : '我')
-                  .fontSize(18)
+                  .fontSize(this.fontSubhead)
                   .fontWeight(FontWeight.Bold)
                   .fontColor($r('app.color.action_text'))
               }
@@ -1558,12 +1637,12 @@ struct Index {
 
             Column({ space: 4 }) {
               Text(this.sessionSnapshot.accountName)
-                .fontSize(18)
+                .fontSize(this.fontSubhead)
                 .fontWeight(FontWeight.Bold)
                 .fontColor($r('app.color.text_primary'))
 
               Text(this.sessionSnapshot.loggedIn ? `已保存 ${this.sessionSnapshot.cookieCount} 个登录 Cookie` : '尚未登录知乎账号')
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .lineHeight(18)
                 .fontColor($r('app.color.text_secondary'))
             }
@@ -1572,7 +1651,7 @@ struct Index {
 
             // 右侧图标按钮：二维码（扫码登录）+ 退出登录
             Row({ space: 8 }) {
-              this.AccountIconButton('⌗', '二维码', () => {
+              this.AccountIconButton($r('sys.symbol.qrcode'), '二维码', () => {
                 if (this.sessionSnapshot.loggedIn) {
                   promptAction.showToast({ message: '请退出账号后使用二维码登录' });
                   return;
@@ -1580,7 +1659,7 @@ struct Index {
                 router.pushUrl({ url: 'pages/QrLogin' });
               })
               if (this.sessionSnapshot.loggedIn) {
-                this.AccountIconButton('⎋', '退出登录', () => {
+                this.AccountIconButton($r('sys.symbol.power'), '退出登录', () => {
                   this.logout();
                 }, $r('app.color.error_text'))
               }
@@ -1591,9 +1670,9 @@ struct Index {
           // 头像点击进入个人主页（见上方头像 onClick）
         }
         .width('100%')
-        .padding(16)
+        .padding(this.cardPadding)
         .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-        .borderRadius(24)
+        .borderRadius(this.spaceLg)
         .border({
           width: 1,
           color: $r('app.color.card_border')
@@ -1631,7 +1710,7 @@ struct Index {
 
         Column({ space: 12 }) {
           Text('快捷入口')
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_secondary'))
             .padding({ left: 4 })
@@ -1639,15 +1718,15 @@ struct Index {
           Column({ space: 2 }) {
             if (this.sessionSnapshot.loggedIn) {
               Row({ space: 12 }) {
-                this.SettingIcon('👥')
+                this.SettingIcon($r('sys.symbol.person_2_fill'))
                 Column({ space: 4 }) {
                   Text('身份管理')
-                    .fontSize(16)
+                    .fontSize(this.fontBody)
                     .fontWeight(FontWeight.Medium)
                     .fontColor($r('app.color.text_primary'))
 
                   Text('管理主账号与马甲号，切换登录身份')
-                    .fontSize(12)
+                    .fontSize(this.fontCaption)
                     .lineHeight(18)
                     .fontColor($r('app.color.text_secondary'))
                 }
@@ -1655,7 +1734,7 @@ struct Index {
                 .alignItems(HorizontalAlign.Start)
 
                 Text('打开')
-                  .fontSize(12)
+                  .fontSize(this.fontCaption)
                   .fontColor($r('app.color.action_text'))
               }
               .width('100%')
@@ -1665,22 +1744,22 @@ struct Index {
                 width: 1,
                 color: $r('app.color.card_border')
               })
-              .borderRadius(20)
+              .borderRadius(this.buttonRadius)
               .onClick(() => {
                 this.openIdentityManagement();
               })
             }
 
             Row({ space: 12 }) {
-              this.SettingIcon('◆')
+              this.SettingIcon($r('sys.symbol.brush'))
               Column({ space: 4 }) {
                 Text('外观与阅读体验')
-                  .fontSize(16)
+                  .fontSize(this.fontBody)
                   .fontWeight(FontWeight.Medium)
                   .fontColor($r('app.color.text_primary'))
 
                 Text('主题与阅读体验入口（已支持黑暗模式）')
-                  .fontSize(12)
+                  .fontSize(this.fontCaption)
                   .lineHeight(18)
                   .fontColor($r('app.color.text_secondary'))
               }
@@ -1688,7 +1767,7 @@ struct Index {
               .alignItems(HorizontalAlign.Start)
 
               Text('打开')
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .fontColor($r('app.color.action_text'))
             }
             .width('100%')
@@ -1698,21 +1777,21 @@ struct Index {
               width: 1,
               color: $r('app.color.card_border')
             })
-            .borderRadius(20)
+            .borderRadius(this.buttonRadius)
             .onClick(() => {
               this.openAppearanceSettings();
             })
 
             Row({ space: 12 }) {
-              this.SettingIcon('▼')
+              this.SettingIcon($r('sys.symbol.line_3_horizontal'))
               Column({ space: 4 }) {
                 Text('推荐系统与内容过滤')
-                  .fontSize(16)
+                  .fontSize(this.fontBody)
                   .fontWeight(FontWeight.Medium)
                   .fontColor($r('app.color.text_primary'))
 
                 Text('推荐算法与内容过滤设置')
-                  .fontSize(12)
+                  .fontSize(this.fontCaption)
                   .lineHeight(18)
                   .fontColor($r('app.color.text_secondary'))
               }
@@ -1720,7 +1799,7 @@ struct Index {
               .alignItems(HorizontalAlign.Start)
 
               Text('打开')
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .fontColor($r('app.color.action_text'))
             }
             .width('100%')
@@ -1730,21 +1809,21 @@ struct Index {
               width: 1,
               color: $r('app.color.card_border')
             })
-            .borderRadius(20)
+            .borderRadius(this.buttonRadius)
             .onClick(() => {
               router.pushUrl({ url: 'pages/FilterSettings' });
             })
 
             Row({ space: 12 }) {
-              this.SettingIcon('⚙')
+              this.SettingIcon($r('sys.symbol.gearshape'))
               Column({ space: 4 }) {
                 Text('系统与更新')
-                  .fontSize(16)
+                  .fontSize(this.fontBody)
                   .fontWeight(FontWeight.Medium)
                   .fontColor($r('app.color.text_primary'))
 
                 Text('项目地址、更新策略与关于信息')
-                  .fontSize(12)
+                  .fontSize(this.fontCaption)
                   .lineHeight(18)
                   .fontColor($r('app.color.text_secondary'))
               }
@@ -1752,7 +1831,7 @@ struct Index {
               .alignItems(HorizontalAlign.Start)
 
               Text('打开')
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .fontColor($r('app.color.action_text'))
             }
             .width('100%')
@@ -1762,7 +1841,7 @@ struct Index {
               width: 1,
               color: $r('app.color.card_border')
             })
-            .borderRadius(20)
+            .borderRadius(this.buttonRadius)
             .onClick(() => {
               router.pushUrl({ url: 'pages/About' });
             })
@@ -1775,7 +1854,7 @@ struct Index {
             width: 1,
             color: $r('app.color.card_border')
           })
-          .borderRadius(24)
+          .borderRadius(this.spaceLg)
         }
         .width('100%')
 
@@ -1933,7 +2012,7 @@ struct Index {
   @Builder
   private ThemeModeOption(mode: AppearanceThemeMode, label: string): void {
     Text(label)
-      .fontSize(12)
+      .fontSize(this.fontCaption)
       .fontWeight(this.themeMode === mode ? FontWeight.Medium : FontWeight.Regular)
       .fontColor(this.themeMode === mode ? $r('app.color.action_text') : $r('app.color.text_secondary'))
       .padding({ left: 10, right: 10, top: 7, bottom: 7 })
@@ -1951,7 +2030,7 @@ struct Index {
   @Builder
   private AmbientBlurOption(intensity: AmbientBlurIntensity, label: string): void {
     Text(label)
-      .fontSize(12)
+      .fontSize(this.fontCaption)
       .fontWeight(this.ambientBlur === intensity ? FontWeight.Medium : FontWeight.Regular)
       .fontColor(this.ambientBlur === intensity ? $r('app.color.action_text') : $r('app.color.text_secondary'))
       .padding({ left: 10, right: 10, top: 7, bottom: 7 })
@@ -1969,7 +2048,7 @@ struct Index {
   @Builder
   private MaterialLevelOption(level: number, label: string): void {
     Text(label)
-      .fontSize(12)
+      .fontSize(this.fontCaption)
       .fontWeight(this.materialLevel === level ? FontWeight.Medium : FontWeight.Regular)
       .fontColor(this.materialLevel === level ? $r('app.color.action_text') : $r('app.color.text_secondary'))
       .padding({ left: 10, right: 10, top: 7, bottom: 7 })
@@ -1990,12 +2069,12 @@ struct Index {
       Column({ space: 18 }) {
         Column({ space: 6 }) {
           Text('外观与阅读体验')
-            .fontSize(24)
+            .fontSize(this.fontSymbol)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
 
           Text('调整主题显示模式')
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .lineHeight(18)
             .fontColor($r('app.color.text_secondary'))
         }
@@ -2006,7 +2085,7 @@ struct Index {
           Row({ space: 12 }) {
             Column({ space: 4 }) {
               Text('显示模式')
-                .fontSize(16)
+                .fontSize(this.fontBody)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
             }
@@ -2027,7 +2106,7 @@ struct Index {
             width: 1,
             color: $r('app.color.card_border')
           })
-          .borderRadius(20)
+          .borderRadius(this.buttonRadius)
       }
       .width('100%')
       .padding(6)
@@ -2036,7 +2115,7 @@ struct Index {
         width: 1,
         color: $r('app.color.card_border')
       })
-      .borderRadius(24)
+      .borderRadius(this.spaceLg)
 
       // HDS 沉浸光感材质强度
       Column({ space: 2 }) {
@@ -2044,12 +2123,12 @@ struct Index {
           // 标题 + 副标题占满整行（不再和芯片挤在一起）
           Column({ space: 4 }) {
             Text('沉浸光感')
-              .fontSize(16)
+              .fontSize(this.fontBody)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
 
             Text('控制沉浸光感材质的渲染强度')
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .lineHeight(18)
               .fontColor($r('app.color.text_secondary'))
           }
@@ -2071,7 +2150,7 @@ struct Index {
           width: 1,
           color: $r('app.color.card_border')
         })
-        .borderRadius(20)
+        .borderRadius(this.buttonRadius)
       }
       .width('100%')
       .padding(6)
@@ -2080,18 +2159,18 @@ struct Index {
         width: 1,
         color: $r('app.color.card_border')
       })
-      .borderRadius(24)
+      .borderRadius(this.spaceLg)
 
         // 信息流与显示开关
         Column({ space: 2 }) {
           Row({ space: 8 }) {
             Column({ space: 4 }) {
               Text('OLED 纯黑')
-                .fontSize(16)
+                .fontSize(this.fontBody)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
               Text('卡片与背景使用纯黑 #000000，OLED 屏幕更省电、对比更强')
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .lineHeight(18)
                 .fontColor($r('app.color.text_secondary'))
             }
@@ -2115,7 +2194,7 @@ struct Index {
           Row({ space: 8 }) {
             Column({ space: 4 }) {
               Text('显示 Feed 缩略图')
-                .fontSize(16)
+                .fontSize(this.fontBody)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
             }
@@ -2139,11 +2218,11 @@ struct Index {
           Row({ space: 8 }) {
             Column({ space: 4 }) {
               Text('刷新悬浮按钮')
-                .fontSize(16)
+                .fontSize(this.fontBody)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
               Text('在首页右下角显示悬浮刷新按钮')
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .lineHeight(18)
                 .fontColor($r('app.color.text_secondary'))
             }
@@ -2167,7 +2246,7 @@ struct Index {
           width: 1,
           color: $r('app.color.card_border')
         })
-        .borderRadius(24)
+        .borderRadius(this.spaceLg)
 
         // 阅读体验（字号 / 行高 / 段间距）
         Column({ space: 2 }) {
@@ -2218,7 +2297,7 @@ struct Index {
           width: 1,
           color: $r('app.color.card_border')
         })
-        .borderRadius(24)
+        .borderRadius(this.spaceLg)
 
         Column()
           .height(this.bottomSafeAreaVp + 12)
@@ -2242,7 +2321,7 @@ struct Index {
         .backgroundColor($r('app.color.card_border'))
 
       Text(this.dateLabel(section.date))
-        .fontSize(17)
+        .fontSize(this.fontBodyLg)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.action_text'))
         .margin({ left: 16, right: 16 })
@@ -2264,12 +2343,12 @@ struct Index {
           .width(104)
           .height(92)
           .objectFit(ImageFit.Cover)
-          .borderRadius(8)
+          .borderRadius(this.spaceSm)
       }
 
       Column({ space: 12 }) {
         Text(item.title)
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontWeight(FontWeight.Medium)
           .lineHeight(22)
           .fontColor($r('app.color.text_primary'))
@@ -2284,7 +2363,7 @@ struct Index {
             .borderRadius(3)
 
           Text(item.hint)
-            .fontSize(12)
+            .fontSize(this.fontCaption)
             .lineHeight(16)
             .fontColor($r('app.color.text_secondary'))
             .maxLines(1)
@@ -2301,14 +2380,14 @@ struct Index {
     }
     .alignItems(VerticalAlign.Center)
     .width('100%')
-    .padding(12)
+    .padding(this.spaceMd)
     .margin({ left: 16, right: 16, bottom: 12 })
     .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
     .border({
       width: 1,
       color: $r('app.color.card_border')
     })
-    .borderRadius(12)
+    .borderRadius(this.spaceMd)
     .clip(true)
     .shadow({
       radius: 8,
@@ -2323,19 +2402,22 @@ struct Index {
 
   @Builder
   private HomeFeedCard(item: HomeFeedItem, showBlockMenu: boolean = false): void {
+    if (item.blockReason !== undefined && item.blockReason.length > 0) {
+      this.FilteredPlaceholderCard(item)
+    } else {
     Column({ space: 12 }) {
       // 0. 动作行（蓝色 actionText + 相对时间，对齐安卓动态流）
       if (item.actionText.length > 0) {
         Row() {
           Text(item.actionText)
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor(this.themeMode === 'dark' ? '#6FA8FF' : '#175199')
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
           if (item.createdTime !== undefined && item.createdTime > 0) {
             Text(formatRelativeTime(item.createdTime))
-              .fontSize(13)
+              .fontSize(this.fontMeta)
               .fontColor($r('app.color.text_tertiary'))
               .flexShrink(1)
               .margin({ left: 12 })
@@ -2347,7 +2429,7 @@ struct Index {
       // 1. 问题标题（置顶、加粗）+ 推荐次数角标（自适应宽圆角矩形描边，标题末尾，首次即显示，99+ 封顶）
       Row({ space: 6 }) {
         Text(item.title)
-          .fontSize(18)
+          .fontSize(this.fontSubhead)
           .fontWeight(FontWeight.Bold)
           .lineHeight(26)
           .fontColor($r('app.color.text_primary'))
@@ -2356,7 +2438,7 @@ struct Index {
           .layoutWeight(1)
         if (this.showRecommendBadge && item.recommendCount !== undefined && item.recommendCount >= 1) {
           Text(item.recommendCount > 99 ? '99+' : `${item.recommendCount}`)
-            .fontSize(11)
+            .fontSize(this.fontMini)
             .fontWeight(FontWeight.Medium)
             .fontColor(this.themeMode === 'dark' ? '#6FA8FF' : '#175199')
             .border({ width: 1, color: this.themeMode === 'dark' ? '#6FA8FF' : '#175199' })
@@ -2372,7 +2454,7 @@ struct Index {
         Column({ space: 8 }) {
           if (item.summary.length > 0) {
             Text(item.summary)
-              .fontSize(13)
+              .fontSize(this.fontMeta)
               .lineHeight(20)
               .fontColor($r('app.color.text_secondary'))
               .maxLines(3)
@@ -2405,7 +2487,7 @@ struct Index {
         } else if (item.authorName.length > 0) {
           Column() {
             Text(item.authorName.slice(0, 1))
-              .fontSize(10)
+              .fontSize(this.fontBadge)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.action_text'))
           }
@@ -2418,7 +2500,7 @@ struct Index {
         }
 
         Text(item.authorName.length > 0 ? item.authorName : '知乎推荐')
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2428,7 +2510,7 @@ struct Index {
 
         // details 占满中间剩余空间并居中；过长省略号；不再贴着 ⋮
         Text(item.details)
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2440,7 +2522,7 @@ struct Index {
         if (showBlockMenu) {
           Column() {
             Text('⋮')
-              .fontSize(18)
+              .fontSize(this.fontSubhead)
               .fontColor($r('app.color.text_secondary'))
           }
           .width(36)
@@ -2457,14 +2539,14 @@ struct Index {
       .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .padding(16)
+    .padding(this.cardPadding)
     .margin({ left: 16, right: 16, bottom: 12 })
     .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
     .border({
       width: 1,
       color: $r('app.color.card_border')
     })
-    .borderRadius(18)
+    .borderRadius(this.pillRadius)
     .clip(true)
     .shadow({
       radius: 12,
@@ -2476,22 +2558,26 @@ struct Index {
       this.openHomeFeedItem(item);
     })
   }
+  }
 
   @Builder
   private VideoFeedCard(item: HomeFeedItem, showBlockMenu: boolean = false): void {
+    if (item.blockReason !== undefined && item.blockReason.length > 0) {
+      this.FilteredPlaceholderCard(item)
+    } else {
     Column({ space: 12 }) {
       // 0. 动作行（蓝色 actionText + 相对时间，对齐安卓动态流）
       if (item.actionText.length > 0) {
         Row() {
           Text(item.actionText)
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor(this.themeMode === 'dark' ? '#6FA8FF' : '#175199')
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
           if (item.createdTime !== undefined && item.createdTime > 0) {
             Text(formatRelativeTime(item.createdTime))
-              .fontSize(13)
+              .fontSize(this.fontMeta)
               .fontColor($r('app.color.text_tertiary'))
               .flexShrink(1)
               .margin({ left: 12 })
@@ -2503,7 +2589,7 @@ struct Index {
       // 标题 + 推荐次数角标（与 HomeFeedCard 同款，角标在标题末尾）
       Row({ space: 6 }) {
         Text(item.title)
-          .fontSize(18)
+          .fontSize(this.fontSubhead)
           .fontWeight(FontWeight.Bold)
           .lineHeight(26)
           .fontColor($r('app.color.text_primary'))
@@ -2512,7 +2598,7 @@ struct Index {
           .layoutWeight(1)
         if (this.showRecommendBadge && item.recommendCount !== undefined && item.recommendCount >= 1) {
           Text(item.recommendCount > 99 ? '99+' : `${item.recommendCount}`)
-            .fontSize(11)
+            .fontSize(this.fontMini)
             .fontWeight(FontWeight.Medium)
             .fontColor(this.themeMode === 'dark' ? '#6FA8FF' : '#175199')
             .border({ width: 1, color: this.themeMode === 'dark' ? '#6FA8FF' : '#175199' })
@@ -2526,7 +2612,7 @@ struct Index {
       Row({ space: 12 }) {
         Column({ space: 8 }) {
           Text(item.details)
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .lineHeight(20)
             .fontColor($r('app.color.text_secondary'))
             .maxLines(2)
@@ -2544,7 +2630,7 @@ struct Index {
               .borderRadius(14)
             Column() {
               Text('▶')
-                .fontSize(26)
+                .fontSize(this.fontLargeTitle)
                 .fontColor('#FFFFFF')
             }
             .width(44)
@@ -2555,10 +2641,10 @@ struct Index {
             .borderRadius(22)
             if (item.durationText !== undefined && item.durationText.length > 0) {
               Text(item.durationText)
-                .fontSize(11)
+                .fontSize(this.fontMini)
                 .fontColor('#FFFFFF')
                 .backgroundColor('#99000000')
-                .borderRadius(4)
+                .borderRadius(this.spaceXs)
                 .padding({ left: 4, right: 4, top: 1, bottom: 1 })
                 .position({ right: 4, bottom: 4 })
             }
@@ -2579,7 +2665,7 @@ struct Index {
         } else if (item.authorName.length > 0) {
           Column() {
             Text(item.authorName.slice(0, 1))
-              .fontSize(10)
+              .fontSize(this.fontBadge)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.action_text'))
           }
@@ -2592,7 +2678,7 @@ struct Index {
         }
 
         Text(item.authorName.length > 0 ? item.authorName : '知乎视频')
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2602,7 +2688,7 @@ struct Index {
 
         // details 占满中间剩余空间并居中；过长省略号；不再贴着 ⋮
         Text(item.details)
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -2614,7 +2700,7 @@ struct Index {
         if (showBlockMenu) {
           Column() {
             Text('⋮')
-              .fontSize(18)
+              .fontSize(this.fontSubhead)
               .fontColor($r('app.color.text_secondary'))
           }
           .width(36)
@@ -2631,14 +2717,14 @@ struct Index {
       .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .padding(16)
+    .padding(this.cardPadding)
     .margin({ left: 16, right: 16, bottom: 12 })
     .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
     .border({
       width: 1,
       color: $r('app.color.card_border')
     })
-    .borderRadius(18)
+    .borderRadius(this.pillRadius)
     .clip(true)
     .shadow({
       radius: 12,
@@ -2650,8 +2736,62 @@ struct Index {
       this.openHomeFeedItem(item);
     })
   }
+  }
 
   // 卡片三点菜单（推荐页卡片挂；其余页传 false 不渲染菜单）
+  // 质量过滤「屏蔽规则」模式下渲染的「已屏蔽」占位卡（对齐安卓 RULES 占位卡）：
+  // 保留在信息流中、仍可点开原内容，三点菜单额外提供「调整质量屏蔽」。
+  @Builder
+  private FilteredPlaceholderCard(item: HomeFeedItem): void {
+    Column({ space: 10 }) {
+      Row({ space: 8 }) {
+        // 琥珀色「已屏蔽」徽标
+        Text('已屏蔽')
+          .fontSize(this.fontMini)
+          .fontWeight(FontWeight.Bold)
+          .fontColor('#7A5B00')
+          .backgroundColor('#FFF3CD')
+          .borderRadius(6)
+          .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+        Text(item.blockReason ?? '低质内容')
+          .fontSize(this.fontCaption)
+          .fontColor($r('app.color.text_secondary'))
+          .layoutWeight(1)
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+        // 三点菜单（含「调整质量屏蔽」）
+        Column() {
+          Text('⋮')
+            .fontSize(this.fontSubhead)
+            .fontColor($r('app.color.text_secondary'))
+        }
+        .width(36)
+        .height(36)
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .margin({ right: 12 })
+        .bindMenu(this.buildPlaceholderMenu(item))
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+
+      Text('点击查看原内容')
+        .fontSize(this.fontCaption)
+        .fontColor($r('app.color.text_tertiary'))
+    }
+    .width('100%')
+    .padding(this.cardPadding)
+    .margin({ left: 16, right: 16, bottom: 12 })
+    .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+    .border({ width: 1, color: $r('app.color.card_border') })
+    .borderRadius(this.pillRadius)
+    .clip(true)
+    .shadow({ radius: 12, color: '#10000000', offsetX: 0, offsetY: 3 })
+    .onClick(() => {
+      this.openHomeFeedItem(item);
+    })
+  }
+
   private buildBlockMenu(item: HomeFeedItem, showBlockMenu: boolean): Array<BlockMenuItem> {
     if (!showBlockMenu) {
       return [];
@@ -2694,6 +2834,21 @@ struct Index {
           return;
         }
         this.showTopicSheet = true;
+      }
+    });
+    return items;
+  }
+
+  // 「已屏蔽」占位卡的三点菜单：复用普通屏蔽菜单，末尾追加「调整质量屏蔽」
+  private buildPlaceholderMenu(item: HomeFeedItem): Array<BlockMenuItem> {
+    const items: BlockMenuItem[] = this.buildBlockMenu(item, true);
+    items.push({
+      value: '调整质量屏蔽',
+      action: () => {
+        const ctx = this.context();
+        FilterSettingsRepository.setQualityFilterModeAll(ctx, 'hide');
+        this.homeItems = FeedFilterService.filterHomeFeed(ctx, this.homeItems);
+        promptAction.showToast({ message: '已调整为隐藏低质内容' });
       }
     });
     return items;
@@ -2832,21 +2987,21 @@ struct Index {
     if (!this.sessionSnapshot.loggedIn) {
       Column({ space: 14 }) {
         Text('需要先登录知乎')
-          .fontSize(22)
+          .fontSize(this.fontTitle)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
 
         Text('主页推荐流依赖登录 Cookie 和签名请求。')
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontColor($r('app.color.text_secondary'))
 
         Text('去登录')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.action_text'))
           .padding({ left: 18, right: 18, top: 10, bottom: 10 })
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
           .onClick(() => {
             this.openLoginPage();
           })
@@ -2858,11 +3013,11 @@ struct Index {
     } else if (this.homeLoading && !this.homeHasLoaded) {
       Column({ space: 10 }) {
         Text('正在加载主页...')
-          .fontSize(18)
+          .fontSize(this.fontSubhead)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
         Text('正在从知乎推荐接口拉取首页内容')
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontColor($r('app.color.text_secondary'))
       }
       .alignItems(HorizontalAlign.Center)
@@ -2872,16 +3027,16 @@ struct Index {
     } else if (this.homeError.length > 0 && !this.homeHasLoaded) {
       Column({ space: 12 }) {
         Text(this.homeError)
-          .fontSize(15)
+          .fontSize(this.fontBodySm)
           .fontColor($r('app.color.error_text'))
 
         Text('重新加载')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.action_text'))
           .padding({ left: 18, right: 18, top: 10, bottom: 10 })
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
           .onClick(() => {
             this.loadHomeFirstPage();
           })
@@ -2902,13 +3057,13 @@ struct Index {
 
         if (this.homeError.length > 0) {
           Text(this.homeError)
-            .fontSize(12)
+            .fontSize(this.fontCaption)
             .fontColor($r('app.color.error_text'))
             .padding({ left: 18, right: 18, top: 0, bottom: 10 })
         }
 
         Text(this.homeNextUrl.length === 0 ? '已经到底了' : (this.homeLoadingMore ? '正在加载更多...' : '加载更多'))
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontWeight(FontWeight.Medium)
           .fontColor(
             this.homeNextUrl.length === 0 || this.homeLoadingMore
@@ -2918,7 +3073,7 @@ struct Index {
           .padding({ left: 18, right: 18, top: 12, bottom: 12 })
           .margin({ top: 4, bottom: 20 })
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
           .enabled(this.homeNextUrl.length > 0 && !this.homeLoadingMore)
           .onClick(() => {
             this.loadMoreHome();
@@ -2930,18 +3085,17 @@ struct Index {
   @Builder
   private FollowTabChip(option: FollowFeedTabOption): void {
     Text(option.title)
-      .fontSize(14)
+      .fontSize(this.fontSecondary)
       .fontWeight(this.followTab === option.key ? FontWeight.Bold : FontWeight.Medium)
       .fontColor(this.followTab === option.key ? $r('app.color.tab_selected_text') : $r('app.color.text_secondary'))
       .textAlign(TextAlign.Center)
-      .layoutWeight(1)
-      .padding({ top: 10, bottom: 10 })
+      .padding({ left: 12, right: 12, top: 6, bottom: 6 })
       .backgroundColor(this.followTab === option.key ? $r('app.color.tab_selected_background') : '#00000000')
       .border({
         width: this.followTab === option.key ? 1 : 0,
         color: this.followTab === option.key ? $r('app.color.tab_selected_border') : '#00000000'
       })
-      .borderRadius(16)
+      .borderRadius(this.pillRadius)
       .onClick(() => {
         this.followTab = option.key;
         if (option.key === 'latest') {
@@ -2955,16 +3109,18 @@ struct Index {
 
   @Builder
   private FollowFilterButton(): void {
-    Row({ space: 6 }) {
-      Text('筛选')
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
+    Column() {
+      SymbolGlyph($r('sys.symbol.gearshape'))
+        .fontSize(this.fontSubhead)
+        .fontColor([$r('app.color.text_primary')])
     }
+    .width(32)
     .height(32)
-    .padding({ left: 14, right: 14 })
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
     .backgroundColor($r('app.color.action_background'))
-    .borderRadius(16)
-    .alignSelf(ItemAlign.Center)
+    .borderRadius(this.buttonRadius)
+    .accessibilityText('关注流筛选')
     .onClick(() => {
       this.showFollowFilterSheet = true;
     })
@@ -2974,7 +3130,7 @@ struct Index {
   private FollowFilterSheet(): void {
     Column({ space: 0 }) {
       Text('关注流筛选')
-        .fontSize(18)
+        .fontSize(this.fontSubhead)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
         .width('100%')
@@ -2982,7 +3138,7 @@ struct Index {
 
       Row({ space: 12 }) {
         Text('赞同了 XX')
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
         Toggle({ type: ToggleType.Switch, isOn: this.followFilterVoteup })
@@ -2997,7 +3153,7 @@ struct Index {
 
       Row({ space: 12 }) {
         Text('想法')
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
         Toggle({ type: ToggleType.Switch, isOn: this.followFilterPin })
@@ -3012,7 +3168,7 @@ struct Index {
 
       Row({ space: 12 }) {
         Text('文章')
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
         Toggle({ type: ToggleType.Switch, isOn: this.followFilterArticle })
@@ -3027,7 +3183,7 @@ struct Index {
 
       Row({ space: 12 }) {
         Text('回答')
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
         Toggle({ type: ToggleType.Switch, isOn: this.followFilterAnswer })
@@ -3042,7 +3198,7 @@ struct Index {
 
       Row({ space: 12 }) {
         Text('屏蔽未关注作者')
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
         Toggle({ type: ToggleType.Switch, isOn: this.followHideUnfollowed })
@@ -3073,7 +3229,7 @@ struct Index {
             .width(36)
             .height(36)
             .objectFit(ImageFit.Cover)
-            .borderRadius(18)
+            .borderRadius(this.pillRadius)
             .clip(true)
             .onClick(() => {
               if (this.userContentUrlToken.length > 0) {
@@ -3083,7 +3239,7 @@ struct Index {
         } else if (this.userContentName.length > 0) {
           Column() {
             Text(this.userContentName.slice(0, 1))
-              .fontSize(16)
+              .fontSize(this.fontBody)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.action_text'))
           }
@@ -3092,7 +3248,7 @@ struct Index {
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
           .onClick(() => {
             if (this.userContentUrlToken.length > 0) {
               this.openPerson(this.userContentUrlToken);
@@ -3100,7 +3256,7 @@ struct Index {
           })
         }
         Text(this.userContentName)
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
@@ -3112,7 +3268,7 @@ struct Index {
             }
           })
         Text('✕')
-          .fontSize(20)
+          .fontSize(this.fontHeading)
           .fontColor($r('app.color.text_secondary'))
           .width(32)
           .height(32)
@@ -3125,7 +3281,7 @@ struct Index {
       if (this.userContentLoading) {
         Column() {
           Text('加载中…')
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor($r('app.color.text_secondary'))
         }
         .width('100%')
@@ -3133,7 +3289,7 @@ struct Index {
       } else if (this.userContentItems.length === 0) {
         Column() {
           Text('暂无发布内容')
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor($r('app.color.text_secondary'))
         }
         .width('100%')
@@ -3165,7 +3321,7 @@ struct Index {
     Row({ space: 12 }) {
       Column({ space: 2 }) {
         Text(`${index + 1}`)
-          .fontSize(18)
+          .fontSize(this.fontSubhead)
           .fontWeight(FontWeight.Bold)
           .fontColor(index < 3 ? $r('app.color.error_text') : $r('app.color.text_tertiary'))
           .textAlign(TextAlign.Center)
@@ -3176,7 +3332,7 @@ struct Index {
 
       Column({ space: 8 }) {
         Text(item.title)
-          .fontSize(17)
+          .fontSize(this.fontBodyLg)
           .fontWeight(FontWeight.Bold)
           .lineHeight(24)
           .fontColor($r('app.color.text_primary'))
@@ -3185,7 +3341,7 @@ struct Index {
 
         if (item.summary.length > 0) {
           Text(item.summary)
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .lineHeight(20)
             .fontColor($r('app.color.text_secondary'))
             .maxLines(2)
@@ -3194,12 +3350,12 @@ struct Index {
 
         Row({ space: 8 }) {
           Text(item.actionText.length > 0 ? item.actionText : '热榜')
-            .fontSize(12)
+            .fontSize(this.fontCaption)
             .fontColor($r('app.color.error_text'))
 
           if (item.details.length > 0) {
             Text(item.details)
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontColor($r('app.color.text_tertiary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3217,7 +3373,7 @@ struct Index {
           .width(88)
           .height(66)
           .objectFit(ImageFit.Cover)
-          .borderRadius(8)
+          .borderRadius(this.spaceSm)
       }
     }
     .width('100%')
@@ -3229,7 +3385,7 @@ struct Index {
       width: 1,
       color: $r('app.color.card_border')
     })
-    .borderRadius(12)
+    .borderRadius(this.spaceMd)
     .clip(true)
     .onClick(() => {
       this.openHomeFeedItem(item);
@@ -3241,11 +3397,11 @@ struct Index {
     if (this.hotLoading && !this.hotHasLoaded) {
       Column({ space: 10 }) {
         Text('正在加载热榜...')
-          .fontSize(18)
+          .fontSize(this.fontSubhead)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
         Text('正在从知乎热榜接口拉取热门内容')
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontColor($r('app.color.text_secondary'))
       }
       .alignItems(HorizontalAlign.Center)
@@ -3255,17 +3411,17 @@ struct Index {
     } else if (this.hotError.length > 0 && !this.hotHasLoaded) {
       Column({ space: 12 }) {
         Text(this.hotError)
-          .fontSize(15)
+          .fontSize(this.fontBodySm)
           .fontColor($r('app.color.error_text'))
           .textAlign(TextAlign.Center)
 
         Text('重新加载')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.action_text'))
           .padding({ left: 18, right: 18, top: 10, bottom: 10 })
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
           .onClick(() => {
             this.loadHotFirstPage();
           })
@@ -3277,11 +3433,11 @@ struct Index {
     } else if (this.hotItems.length === 0) {
       Column({ space: 10 }) {
         Text('暂无热榜内容')
-          .fontSize(18)
+          .fontSize(this.fontSubhead)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
         Text('可以稍后刷新。')
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontColor($r('app.color.text_secondary'))
       }
       .alignItems(HorizontalAlign.Center)
@@ -3293,24 +3449,24 @@ struct Index {
         Row() {
           Column({ space: 2 }) {
             Text('热榜')
-              .fontSize(18)
+              .fontSize(this.fontSubhead)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.text_primary'))
 
             Text('全站热门信息流')
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontColor($r('app.color.text_secondary'))
           }
           .layoutWeight(1)
           .alignItems(HorizontalAlign.Start)
 
           Text('刷新')
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontWeight(FontWeight.Medium)
             .fontColor(this.hotLoading ? $r('app.color.text_tertiary') : $r('app.color.action_text'))
             .padding({ left: 12, right: 12, top: 7, bottom: 7 })
             .backgroundColor($r('app.color.action_background'))
-            .borderRadius(16)
+            .borderRadius(this.cardRadius)
             .enabled(!this.hotLoading)
             .onClick(() => {
               this.refreshHotPage();
@@ -3330,13 +3486,13 @@ struct Index {
 
         if (this.hotError.length > 0) {
           Text(this.hotError)
-            .fontSize(12)
+            .fontSize(this.fontCaption)
             .fontColor($r('app.color.error_text'))
             .padding({ left: 18, right: 18, top: 0, bottom: 10 })
         }
 
         Text(this.hotNextUrl.length === 0 ? '已经到底了' : (this.hotLoadingMore ? '正在加载更多...' : '加载更多'))
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontWeight(FontWeight.Medium)
           .fontColor(
             this.hotNextUrl.length === 0 || this.hotLoadingMore
@@ -3346,7 +3502,7 @@ struct Index {
           .padding({ left: 18, right: 18, top: 12, bottom: 12 })
           .margin({ top: 4, bottom: 20 })
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
           .enabled(this.hotNextUrl.length > 0 && !this.hotLoadingMore)
           .onClick(() => {
             this.loadMoreHot();
@@ -3360,21 +3516,21 @@ struct Index {
     if (!this.sessionSnapshot.loggedIn) {
       Column({ space: 14 }) {
         Text('需要先登录知乎')
-          .fontSize(22)
+          .fontSize(this.fontTitle)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
 
         Text('关注最新与精选依赖登录 Cookie 和签名请求。')
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontColor($r('app.color.text_secondary'))
 
         Text('去登录')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.action_text'))
           .padding({ left: 18, right: 18, top: 10, bottom: 10 })
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
           .onClick(() => {
             this.openLoginPage();
           })
@@ -3388,11 +3544,11 @@ struct Index {
         if (this.followLoading() && !this.followHasLoaded()) {
           Column({ space: 10 }) {
             Text('正在加载关注流...')
-              .fontSize(18)
+              .fontSize(this.fontSubhead)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.text_primary'))
             Text(this.followTab === 'featured' ? '正在同步关注精选内容' : '正在同步关注最新')
-              .fontSize(13)
+              .fontSize(this.fontMeta)
               .fontColor($r('app.color.text_secondary'))
           }
           .alignItems(HorizontalAlign.Center)
@@ -3402,17 +3558,17 @@ struct Index {
         } else if (this.followError().length > 0 && !this.followHasLoaded()) {
           Column({ space: 12 }) {
             Text(this.followError())
-              .fontSize(15)
+              .fontSize(this.fontBodySm)
               .fontColor($r('app.color.error_text'))
               .textAlign(TextAlign.Center)
 
             Text('重新加载')
-              .fontSize(14)
+              .fontSize(this.fontSecondary)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.action_text'))
               .padding({ left: 18, right: 18, top: 10, bottom: 10 })
               .backgroundColor($r('app.color.action_background'))
-              .borderRadius(18)
+              .borderRadius(this.pillRadius)
               .onClick(() => {
                 this.loadFollowFirstPage(this.followTab);
               })
@@ -3424,11 +3580,11 @@ struct Index {
         } else if (this.followItems().length === 0) {
           Column({ space: 10 }) {
             Text('暂无关注内容')
-              .fontSize(18)
+              .fontSize(this.fontSubhead)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.text_primary'))
             Text('可以稍后刷新，或切换另一个关注子页。')
-              .fontSize(13)
+              .fontSize(this.fontMeta)
               .fontColor($r('app.color.text_secondary'))
           }
           .alignItems(HorizontalAlign.Center)
@@ -3441,7 +3597,7 @@ struct Index {
               // 我关注的人 横排（仅最新 tab，对齐安卓 FollowingUsersRow）
               if (this.followRecentLoading && this.followRecentUsers.length === 0) {
                 Text('加载关注的人…')
-                  .fontSize(13)
+                  .fontSize(this.fontMeta)
                   .fontColor($r('app.color.text_secondary'))
                   .padding({ left: 16, top: 4, bottom: 8 })
               } else if (this.followRecentUsers.length > 0) {
@@ -3466,7 +3622,7 @@ struct Index {
                           }
                         }
                         Text(u.name)
-                          .fontSize(12)
+                          .fontSize(this.fontCaption)
                           .fontColor($r('app.color.text_primary'))
                           .maxLines(1)
                           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3496,13 +3652,13 @@ struct Index {
 
             if (this.followError().length > 0) {
               Text(this.followError())
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .fontColor($r('app.color.error_text'))
                 .padding({ left: 18, right: 18, top: 0, bottom: 10 })
             }
 
             Text(this.followNextUrl().length === 0 ? '已经到底了' : (this.followLoadingMore() ? '正在加载更多...' : '加载更多'))
-              .fontSize(14)
+              .fontSize(this.fontSecondary)
               .fontWeight(FontWeight.Medium)
               .fontColor(
                 this.followNextUrl().length === 0 || this.followLoadingMore()
@@ -3512,7 +3668,7 @@ struct Index {
               .padding({ left: 18, right: 18, top: 12, bottom: 12 })
               .margin({ top: 4, bottom: 20 })
               .backgroundColor($r('app.color.action_background'))
-              .borderRadius(18)
+              .borderRadius(this.pillRadius)
               .enabled(this.followNextUrl().length > 0 && !this.followLoadingMore())
               .onClick(() => {
                 this.loadMoreFollow();
@@ -3529,12 +3685,12 @@ struct Index {
     if (this.historyItems.length === 0) {
       Column({ space: 12 }) {
         Text('暂无最近浏览')
-          .fontSize(20)
+          .fontSize(this.fontHeading)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
 
         Text('从主页、关注或日报打开内容后，会在这里显示。')
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontColor($r('app.color.text_secondary'))
           .textAlign(TextAlign.Center)
       }
@@ -3546,19 +3702,19 @@ struct Index {
       Column({ space: 10 }) {
         Row() {
           Text('最近浏览')
-            .fontSize(18)
+            .fontSize(this.fontSubhead)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
             .layoutWeight(1)
 
           Text('清空')
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_secondary'))
             .padding({ left: 14, right: 14, top: 8, bottom: 8 })
             .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
             .border({ width: 1, color: $r('app.color.card_border') })
-            .borderRadius(16)
+            .borderRadius(this.cardRadius)
             .onClick(() => {
               this.clearHistoryItems();
             })
@@ -3585,20 +3741,20 @@ struct Index {
       // ---- 标题行 ----
       Row() {
         Text('浏览历史')
-          .fontSize(24)
+          .fontSize(this.fontSymbol)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
 
         if (this.mergedHistoryItems.length > 0) {
           Text('清空')
-            .fontSize(14)
+            .fontSize(this.fontSecondary)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_secondary'))
             .padding({ left: 14, right: 14, top: 8, bottom: 8 })
             .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
             .border({ width: 1, color: $r('app.color.card_border') })
-            .borderRadius(16)
+            .borderRadius(this.cardRadius)
             .onClick(() => {
               this.clearHistoryItems();
             })
@@ -3612,12 +3768,12 @@ struct Index {
         // 空状态
         Column({ space: 10 }) {
           Text('暂无浏览历史')
-            .fontSize(18)
+            .fontSize(this.fontSubhead)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
 
           Text('从主页、关注或日报打开内容后，会在这里显示。')
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor($r('app.color.text_secondary'))
             .textAlign(TextAlign.Center)
         }
@@ -3639,7 +3795,7 @@ struct Index {
               .width(14)
               .height(14)
             Text('正在同步云端数据...')
-              .fontSize(13)
+              .fontSize(this.fontMeta)
               .fontColor($r('app.color.text_secondary'))
           }
           .alignItems(VerticalAlign.Center)
@@ -3658,12 +3814,12 @@ struct Index {
                 .margin({ top: 8, bottom: 8 })
             } else {
               Text('加载更多')
-                .fontSize(14)
+                .fontSize(this.fontSecondary)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.action_text'))
                 .padding({ left: 18, right: 18, top: 10, bottom: 10 })
                 .backgroundColor($r('app.color.action_background'))
-                .borderRadius(18)
+                .borderRadius(this.pillRadius)
                 .onClick(() => {
                   this.loadMoreCloudHistory();
                 })
@@ -3678,16 +3834,16 @@ struct Index {
         if (this.cloudHistoryError.length > 0 && !this.cloudHistoryLoading) {
           Row({ space: 6 }) {
             Text('云端同步失败')
-              .fontSize(13)
+              .fontSize(this.fontMeta)
               .fontColor($r('app.color.text_secondary'))
 
             Text('重试')
-              .fontSize(13)
+              .fontSize(this.fontMeta)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.action_text'))
               .padding({ left: 10, right: 10, top: 4, bottom: 4 })
               .backgroundColor($r('app.color.action_background'))
-              .borderRadius(12)
+              .borderRadius(this.spaceMd)
               .onClick(() => {
                 this.loadCloudHistory();
               })
@@ -3716,7 +3872,7 @@ struct Index {
     Column({ space: 12 }) {
       // 标题
       Text(item.title)
-        .fontSize(18)
+        .fontSize(this.fontSubhead)
         .fontWeight(FontWeight.Bold)
         .lineHeight(26)
         .fontColor($r('app.color.text_primary'))
@@ -3727,7 +3883,7 @@ struct Index {
       // 正文摘要
       if (item.summary.length > 0) {
         Text(item.summary)
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .lineHeight(20)
           .fontColor($r('app.color.text_secondary'))
           .maxLines(3)
@@ -3738,7 +3894,7 @@ struct Index {
       // 底部操作栏：作者名 + 时间 + ⋮ 菜单
       Row({ space: 10 }) {
         Text(item.authorName.length > 0 ? item.authorName : '知乎推荐')
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3747,7 +3903,7 @@ struct Index {
         Blank().layoutWeight(1).height(1)
 
         Text(item.details)
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -3756,7 +3912,7 @@ struct Index {
         Blank().width(12).height(1)
 
         Text('⋮')
-          .fontSize(18)
+          .fontSize(this.fontSubhead)
           .fontColor($r('app.color.text_secondary'))
           .onClick(() => {
             this.showHistoryItemMenu(item);
@@ -3766,14 +3922,14 @@ struct Index {
       .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .padding(16)
+    .padding(this.cardPadding)
     .margin({ left: 16, right: 16, bottom: 12 })
     .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
     .border({
       width: 1,
       color: $r('app.color.card_border')
     })
-    .borderRadius(18)
+    .borderRadius(this.pillRadius)
     .clip(true)
     .shadow({
       radius: 12,
@@ -3791,11 +3947,11 @@ struct Index {
     if (this.dailyLoading && this.dailySections.length === 0) {
       Column({ space: 10 }) {
         Text('正在加载日报...')
-          .fontSize(18)
+          .fontSize(this.fontSubhead)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
         Text('正在从知乎日报接口拉取最新内容')
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontColor($r('app.color.text_secondary'))
       }
       .alignItems(HorizontalAlign.Center)
@@ -3805,16 +3961,16 @@ struct Index {
     } else if (this.dailyError.length > 0 && this.dailySections.length === 0) {
       Column({ space: 12 }) {
         Text(this.dailyError)
-          .fontSize(15)
+          .fontSize(this.fontBodySm)
           .fontColor($r('app.color.error_text'))
 
         Text('重试')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.action_text'))
           .padding({ left: 18, right: 18, top: 10, bottom: 10 })
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
           .onClick(() => {
             this.loadLatestDaily();
           })
@@ -3837,19 +3993,19 @@ struct Index {
 
         if (this.dailyError.length > 0) {
           Text(this.dailyError)
-            .fontSize(12)
+            .fontSize(this.fontCaption)
             .fontColor($r('app.color.error_text'))
             .padding({ left: 18, right: 18, top: 0, bottom: 10 })
         }
 
         Text(this.dailyLoadingMore ? '正在加载更多...' : '加载更多')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.dailyLoadingMore ? $r('app.color.text_tertiary') : $r('app.color.action_text'))
           .padding({ left: 18, right: 18, top: 12, bottom: 12 })
           .margin({ top: 4, bottom: 20 })
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
           .enabled(!this.dailyLoadingMore)
           .onClick(() => {
             this.loadMoreDaily();
@@ -3862,12 +4018,12 @@ struct Index {
   private PlaceholderPage(): void {
     Column({ space: 12 }) {
       Text(this.portalPlaceholder(this.selectedPortalTab))
-        .fontSize(20)
+        .fontSize(this.fontHeading)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
 
       Text('当前先接入主页和日报，这个入口后续再迁。')
-        .fontSize(13)
+        .fontSize(this.fontMeta)
         .fontColor($r('app.color.text_secondary'))
     }
     .alignItems(HorizontalAlign.Center)
@@ -3895,7 +4051,7 @@ struct Index {
   private PortalTab(item: AppPortalOption): void {
     Column() {
       Text(item.title)
-        .fontSize(14)
+        .fontSize(this.fontSecondary)
         .fontWeight(this.selectedPortalTab === item.key ? FontWeight.Bold : FontWeight.Medium)
         .fontColor(this.selectedPortalTab === item.key ? $r('app.color.tab_selected_text') : $r('app.color.text_secondary'))
     }
@@ -3909,7 +4065,7 @@ struct Index {
       width: this.selectedPortalTab === item.key ? 1 : 0,
       color: this.selectedPortalTab === item.key ? $r('app.color.tab_selected_border') : '#00000000'
     })
-    .borderRadius(18)
+    .borderRadius(this.pillRadius)
     .onClick(() => {
       this.selectedPortalTab = item.key;
       this.showHomeAccountPanel = false;
@@ -3951,7 +4107,7 @@ struct Index {
       width: 1,
       color: $r('app.color.tab_bar_border')
     })
-    .borderRadius(24)
+    .borderRadius(this.spaceLg)
     .shadow({
       radius: 18,
       color: '#10000000',
@@ -3967,14 +4123,14 @@ struct Index {
     Column() {
       Row() {
         Text('主页')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontWeight(this.selectedPortalTab === 'home' ? FontWeight.Bold : FontWeight.Medium)
           .fontColor(this.selectedPortalTab === 'home' ? '#FFFFFF' : $r('app.color.action_pill_icon'))
       }
       .alignItems(VerticalAlign.Center)
       .padding({ left: 18, right: 18, top: 6, bottom: 6 })
-      .backgroundColor(this.selectedPortalTab === 'home' ? $r('app.color.action_text') : $r('app.color.action_pill_button_inactive'))
-      .borderRadius(16)
+      .backgroundColor(this.selectedPortalTab === 'home' ? $r('app.color.action_text') : ThemeColors.oledBlack(this.oledBlack, this.isDark, $r('app.color.action_pill_button_inactive')))
+      .borderRadius(this.cardRadius)
     }
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
@@ -3995,14 +4151,14 @@ struct Index {
     Column() {
       Row() {
         Text('关注')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontWeight(this.selectedPortalTab === 'follow' ? FontWeight.Bold : FontWeight.Medium)
           .fontColor(this.selectedPortalTab === 'follow' ? '#FFFFFF' : $r('app.color.action_pill_icon'))
       }
       .alignItems(VerticalAlign.Center)
       .padding({ left: 18, right: 18, top: 6, bottom: 6 })
-      .backgroundColor(this.selectedPortalTab === 'follow' ? $r('app.color.action_text') : $r('app.color.action_pill_button_inactive'))
-      .borderRadius(16)
+      .backgroundColor(this.selectedPortalTab === 'follow' ? $r('app.color.action_text') : ThemeColors.oledBlack(this.oledBlack, this.isDark, $r('app.color.action_pill_button_inactive')))
+      .borderRadius(this.cardRadius)
     }
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
@@ -4022,14 +4178,14 @@ struct Index {
     Column() {
       Row() {
         Text('热榜')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontWeight(this.selectedPortalTab === 'hot' ? FontWeight.Bold : FontWeight.Medium)
           .fontColor(this.selectedPortalTab === 'hot' ? '#FFFFFF' : $r('app.color.action_pill_icon'))
       }
       .alignItems(VerticalAlign.Center)
       .padding({ left: 18, right: 18, top: 6, bottom: 6 })
-      .backgroundColor(this.selectedPortalTab === 'hot' ? $r('app.color.action_text') : $r('app.color.action_pill_button_inactive'))
-      .borderRadius(16)
+      .backgroundColor(this.selectedPortalTab === 'hot' ? $r('app.color.action_text') : ThemeColors.oledBlack(this.oledBlack, this.isDark, $r('app.color.action_pill_button_inactive')))
+      .borderRadius(this.cardRadius)
     }
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
@@ -4049,14 +4205,14 @@ struct Index {
     Column() {
       Row() {
         Text('日报')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontWeight(this.selectedPortalTab === 'daily' ? FontWeight.Bold : FontWeight.Medium)
           .fontColor(this.selectedPortalTab === 'daily' ? '#FFFFFF' : $r('app.color.action_pill_icon'))
       }
       .alignItems(VerticalAlign.Center)
       .padding({ left: 18, right: 18, top: 6, bottom: 6 })
-      .backgroundColor(this.selectedPortalTab === 'daily' ? $r('app.color.action_text') : $r('app.color.action_pill_button_inactive'))
-      .borderRadius(16)
+      .backgroundColor(this.selectedPortalTab === 'daily' ? $r('app.color.action_text') : ThemeColors.oledBlack(this.oledBlack, this.isDark, $r('app.color.action_pill_button_inactive')))
+      .borderRadius(this.cardRadius)
     }
     .justifyContent(FlexAlign.Center)
     .alignItems(HorizontalAlign.Center)
@@ -4075,14 +4231,14 @@ struct Index {
   KeywordSheet() {
     Column({ space: 12 }) {
       Text('按关键词屏蔽')
-        .fontSize(16)
+        .fontSize(this.fontBody)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
         .width('100%')
         .textAlign(TextAlign.Start)
 
       Text('包含该关键词的内容将从推荐页隐藏')
-        .fontSize(12)
+        .fontSize(this.fontCaption)
         .fontColor($r('app.color.text_secondary'))
         .width('100%')
         .textAlign(TextAlign.Start)
@@ -4098,7 +4254,7 @@ struct Index {
 
       if (this.keywordInputError.length > 0) {
         Text(this.keywordInputError)
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.error_text'))
           .width('100%')
           .textAlign(TextAlign.Start)
@@ -4119,7 +4275,7 @@ struct Index {
       .width('100%')
       .margin({ top: 4 })
     }
-    .padding(20)
+    .padding(this.pagePadding)
     .width('100%')
   }
 
@@ -4127,7 +4283,7 @@ struct Index {
   private TopicSheet() {
     Column({ space: 12 }) {
       Text('按话题屏蔽')
-        .fontSize(16)
+        .fontSize(this.fontBody)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
         .width('100%')
@@ -4135,7 +4291,7 @@ struct Index {
 
       if (this.topicSheetTopics.length > 0) {
         Text('选择要屏蔽的话题（可多选）')
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
           .textAlign(TextAlign.Start)
@@ -4145,13 +4301,13 @@ struct Index {
             ForEach(this.topicSheetTopics, (topic: HomeFeedTopic) => {
               Row({ space: 10 }) {
                 Text(topic.name.length > 0 ? topic.name : ('#' + topic.id))
-                  .fontSize(14)
+                  .fontSize(this.fontSecondary)
                   .fontColor($r('app.color.text_primary'))
                   .layoutWeight(1)
                   .textAlign(TextAlign.Start)
                 if (this.selectedTopicIds.indexOf(topic.id) >= 0) {
                   Text('✓')
-                    .fontSize(16)
+                    .fontSize(this.fontBody)
                     .fontColor($r('app.color.action_text'))
                 }
               }
@@ -4173,7 +4329,7 @@ struct Index {
         .constraintSize({ maxHeight: 320 })
       } else {
         Text('该内容没有可屏蔽的话题')
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
           .textAlign(TextAlign.Start)
@@ -4194,7 +4350,7 @@ struct Index {
       .width('100%')
       .margin({ top: 4 })
     }
-    .padding(20)
+    .padding(this.pagePadding)
     .width('100%')
   }
 
@@ -4230,6 +4386,7 @@ struct Index {
                   .onWillScroll((_dx: number, dy: number, _state: ScrollState) => {
                     this.updateHomeBottomBarOnScroll(dy);
                     this.updateTopBarOnScroll(dy);
+                    this.updateRefreshFabAutoHideOnScroll();
                   })
                   .onScrollStop(() => {
                     this.snapHomeBottomBar();
@@ -4273,6 +4430,7 @@ struct Index {
                   .onWillScroll((_dx: number, dy: number, _state: ScrollState) => {
                     this.updateHomeBottomBarOnScroll(dy);
                     this.updateTopBarOnScroll(dy);
+                    this.updateRefreshFabAutoHideOnScroll();
                   })
                   .onScrollStop(() => {
                     this.snapHomeBottomBar();
@@ -4316,6 +4474,7 @@ struct Index {
                   .onWillScroll((_dx: number, dy: number, _state: ScrollState) => {
                     this.updateHomeBottomBarOnScroll(dy);
                     this.updateTopBarOnScroll(dy);
+                    this.updateRefreshFabAutoHideOnScroll();
                   })
                   .onScrollStop(() => {
                     this.snapHomeBottomBar();
@@ -4359,6 +4518,7 @@ struct Index {
                   .onWillScroll((_dx: number, dy: number, _state: ScrollState) => {
                     this.updateHomeBottomBarOnScroll(dy);
                     this.updateTopBarOnScroll(dy);
+                    this.updateRefreshFabAutoHideOnScroll();
                   })
                   .onScrollStop(() => {
                     this.snapHomeBottomBar();
@@ -4390,8 +4550,10 @@ struct Index {
             barSideMargin: 16,
             barBottomMargin: 12,
             systemMaterialEffect: {
-              materialType: hdsMaterial.MaterialType.IMMERSIVE,
-              materialLevel: this.resolveMaterialLevel(this.materialLevel)
+              // 原先写死 IMMERSIVE：设备不支持时拿不到预期质感。
+              // 改为按设备能力解析，不支持时自动退回 ADAPTIVE（跟随系统策略）。
+              materialType: ZhihuMaterial.resolveType(),
+              materialLevel: ZhihuMaterial.resolveLevel(this.materialLevel)
             }
           })
           .onChange((index: number) => {
@@ -4405,20 +4567,24 @@ struct Index {
 
         if (this.showRefreshFab && this.selectedPortalTab === 'home') {
           Button() {
-            Image($r('app.media.ic_refresh'))
-              .draggable(false)
-              .width(24)
-              .height(24)
-              .renderMode(ImageRenderMode.Template)
-              .fillColor($r('app.color.action_pill_icon'))
-              .syncLoad(true)
+            SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+              .fontSize(this.fontSymbol)
+              .fontColor([$r('app.color.action_pill_icon')])
           }
           .width(52)
           .height(52)
           .borderRadius(26)
           .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
           .shadow({ radius: 12, color: '#20000000', offsetX: 0, offsetY: 4 })
-          .position({ right: 16, bottom: BOTTOM_PORTAL_BAR_CONTENT_INSET + this.bottomSafeAreaVp + 16 })
+          .position({ right: this.cardPadding, bottom: BOTTOM_PORTAL_BAR_CONTENT_INSET + this.bottomSafeAreaVp + 16 })
+          .opacity(this.refreshFabOpacity)
+          .animation({
+            duration: 180,
+            curve: Curve.EaseOut,
+            delay: 0,
+            iterations: 1,
+            playMode: PlayMode.Normal
+          })
           .onClick(() => {
             this.tabRefreshing = true;
             this.refreshCurrentTab();

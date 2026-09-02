@@ -174,6 +174,30 @@ export function buildThemeScript(
   `;
 }
 
+/**
+ * 把阅读体验变量（及 OLED 覆盖）直接编译进 HTML 的 <style>，随文档一起解析。
+ *
+ * 为什么需要它：靠脚本注入（无论 documentEnd 还是 headEnd）本质都是「文档已开始渲染后再改值」，
+ * 首帧会先按 CSS 默认值渲染，随后被改值触发重排，表现为「加载完又变一次大小」。
+ * 内联进 HTML 后值随文档解析即生效，首帧字号就是对的，从根上消除闪烁。
+ *
+ * 脚本注入仍保留（用于设置页实时调节）：JS 的 setProperty 写的是元素 inline style，
+ * 优先级高于这里的 <style> 规则，所以实时调节会正确覆盖本函数写入的值。
+ */
+export function buildReaderVarsStyle(
+  themeMode: 'light' | 'dark',
+  oledBlack: boolean = false,
+  reader: ReaderStyle = { fontScale: 1, lineHeight: 1.72, paraSpacing: 1 }
+): string {
+  const oledVars = (oledBlack && themeMode === 'dark')
+    ? '--page-bg:#000000;--card-bg:#000000;'
+    : '';
+  return '<style>html{--reader-font-scale:' + reader.fontScale
+    + ';--reader-line-height:' + reader.lineHeight
+    + ';--reader-para-spacing:' + reader.paraSpacing
+    + ';' + oledVars + '}</style>';
+}
+
 export class ZhihuWebBridgeHost {
   constructor(private readonly onEvent: (event: ZhihuRichWebEvent) => void) {
   }

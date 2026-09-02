@@ -3,6 +3,8 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { AppearanceSettingsRepository } from '../services/AppearanceSettingsRepository';
+import { DesignMetrics } from '../services/DesignMetrics';
+import { ThemeColors } from '../services/ThemeColors';
 
 const DOMAIN = 0x0000;
 const TAG = 'ZhihuPlusNext';
@@ -57,6 +59,8 @@ function isZhihuLink(uri: string | undefined): string | undefined {
 }
 
 export default class EntryAbility extends UIAbility {
+  /** 缓存主窗口句柄，供切换深浅色 / OLED 时同步窗口底色（消除跳转闪白） */
+  private static mainWindow?: window.Window;
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     // 必须在任何 Web 组件创建之前注册，否则已发起的子资源请求拿不到该 UA。
     applyZhihuImageUserAgent();
@@ -64,6 +68,13 @@ export default class EntryAbility extends UIAbility {
       AppearanceSettingsRepository.load(this.context);
     } catch (error) {
       hilog.error(DOMAIN, TAG, 'Failed to set color mode: %{public}s', JSON.stringify(error));
+    }
+    // 软尺寸层：读出持久化的字号/间距倍率，算出派生 token 并写入 AppStorage，
+    // 必须在页面创建前完成，否则首帧拿到的还是默认值。
+    try {
+      DesignMetrics.load(this.context);
+    } catch (error) {
+      hilog.error(DOMAIN, TAG, 'Failed to load design metrics: %{public}s', JSON.stringify(error));
     }
     hilog.info(DOMAIN, TAG, 'Ability created with want: %{public}s', JSON.stringify(want));
     hilog.info(DOMAIN, TAG, 'Launch param: %{public}s', JSON.stringify(launchParam));
@@ -94,11 +105,35 @@ export default class EntryAbility extends UIAbility {
         AppStorage.setOrCreate<boolean>('isDark', isDark);
       }
     }
+    // 深浅色变化（含手动 setColorMode 触发的回调）同步窗口底色，消除跳转闪白。
+    EntryAbility.applyWindowBackground();
+  }
+
+  /**
+   * 按当前深浅色 / OLED 黑模式设置窗口底色。
+   * setWindowBackgroundColor 只接受字符串色值，故从 ThemeColors.windowBackground 取十六进制。
+   * 在窗口创建、系统配置变化、以及 OLED 开关切换时都会调用。
+   */
+  static applyWindowBackground(): void {
+    const w = EntryAbility.mainWindow;
+    if (w === undefined) {
+      return;
+    }
+    const isDark: boolean = AppStorage.get<boolean>('isDark') ?? false;
+    const oledBlack: boolean = AppStorage.get<boolean>('oledBlack') ?? false;
+    try {
+      w.setWindowBackgroundColor(ThemeColors.windowBackground(oledBlack, isDark));
+    } catch (e) {
+      hilog.error(DOMAIN, TAG, 'Failed to set window background: %{public}s', (e as Error)?.message ?? String(e));
+    }
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
     try {
       const mainWindow = windowStage.getMainWindowSync();
+      EntryAbility.mainWindow = mainWindow;
+      // 首帧前先把窗口底色按当前主题设好，避免冷启动/首个页面闪白。
+      EntryAbility.applyWindowBackground();
       const updateSafeArea = (type: window.AvoidAreaType, area: window.AvoidArea): void => {
         if (type === window.AvoidAreaType.TYPE_SYSTEM) {
           AppStorage.setOrCreate<number>(TOP_SAFE_AREA_KEY, px2vp(area.topRect.height));
@@ -111,9 +146,13 @@ export default class EntryAbility extends UIAbility {
 
       mainWindow.setWindowLayoutFullScreen(true)
         .then(() => {
+          // 导航栏底色设为与页面同色（浅色 #F1F3F5 / 深色 #0F141A / OLED 纯黑），
+          // 消除浅色模式下系统导航条默认白色块遮挡列表底部内容的问题。
+          const isDark: boolean = AppStorage.get<boolean>('isDark') ?? false;
+          const oledBlack: boolean = AppStorage.get<boolean>('oledBlack') ?? false;
           return mainWindow.setWindowSystemBarProperties({
             statusBarColor: '#00000000',
-            navigationBarColor: '#00000000'
+            navigationBarColor: ThemeColors.windowBackground(oledBlack, isDark)
           });
         })
         .then(() => {

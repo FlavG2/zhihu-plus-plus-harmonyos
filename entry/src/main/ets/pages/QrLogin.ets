@@ -6,11 +6,13 @@ import {
   requestQrCode,
   pollQrCodeLogin
 } from '../services/QrLoginService';
+import { PageHeader } from '../components/PageHeader';
 
 @Entry
 @Component
 struct QrLogin {
-  @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
+  @StorageProp('fontMeta') private fontMeta: string = '13fp';
+  @StorageProp('fontSecondary') private fontSecondary: string = '14fp';
   @State private qrLink: string = '';
   @State private statusText: string = '正在获取二维码…';
   @State private isWorking: boolean = true;
@@ -109,47 +111,13 @@ struct QrLogin {
 
   build() {
     Column() {
-      Row() {
-        Text('返回')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.action_text'))
-          .padding({ left: 14, right: 14, top: 8, bottom: 8 })
-          .backgroundColor($r('app.color.action_background'))
-          .borderRadius(16)
-          .onClick(() => {
-            router.back({ url: '' });
-          })
-
-        Column({ space: 2 }) {
-          Text('扫码登录')
-            .fontSize(22)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-
-          Text(this.isWorking ? '请使用知乎 App 扫码' : ' ')
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-        .margin({ left: 12 })
-      }
-      .width('100%')
-      .padding({ left: 20, right: 20, top: this.topSafeAreaVp + 16, bottom: 12 })
-      .backgroundColor($r('app.color.glass_top_bar_background'))
-      .border({
-        width: {
-          bottom: 1
-        },
-        color: $r('app.color.glass_top_bar_border')
-      })
-      .backdropBlur(24)
+      // 单行标题（副标题历史上有 @BuilderParam 跨组件崩溃隐患，这里只留一行）
+      PageHeader({ title: '扫码登录' })
 
       Column({ space: 20 }) {
         if (this.riskControlMessage.length > 0) {
           Text(this.riskControlMessage)
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor($r('app.color.error_text'))
             .textAlign(TextAlign.Center)
             .padding({ left: 24, right: 24 })
@@ -169,13 +137,13 @@ struct QrLogin {
         }
 
         Text(this.statusText)
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontColor($r('app.color.text_secondary'))
           .textAlign(TextAlign.Center)
           .padding({ left: 24, right: 24 })
 
         Button('刷新二维码')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .backgroundColor($r('app.color.action_background'))
           .fontColor($r('app.color.action_text'))
           .onClick(() => {

@@ -1,9 +1,10 @@
 import { router, promptAction } from '@kit.ArkUI';
 import common from '@ohos.app.ability.common';
 import { preferences } from '@kit.ArkData';
-import { FILTER_KEYS } from '../services/FilterSettingsRepository';
-import { NumberSettingRow, BoolSettingRow } from './FilterSettingRows';
+import { FILTER_KEYS, FilterSettingsRepository, FilterMode } from '../services/FilterSettingsRepository';
+import { NumberSettingRow, BoolSettingRow, ModeSelectRow } from './FilterSettingRows';
 import { ThemeColors } from '../services/ThemeColors';
+import { PageHeader } from '../components/PageHeader';
 
 @Component
 struct SettingsCard {
@@ -11,11 +12,12 @@ struct SettingsCard {
   @BuilderParam content: () => void;
   @StorageLink('oledBlack') oledBlack: boolean = false;
   @StorageLink('isDark') isDark: boolean = false;
+  @StorageProp('fontMeta') fontMeta: string = '13fp';
 
   build() {
     Column({ space: 0 }) {
       Text(this.title)
-        .fontSize(13)
+        .fontSize(this.fontMeta)
         .fontColor($r('app.color.text_secondary'))
         .padding({ left: 16, top: 12, bottom: 6 })
       Column({ space: 0 }) {
@@ -36,28 +38,26 @@ struct SmartFilterSettingsPage {
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
   @StorageLink('oledBlack') oledBlack: boolean = false;
   @StorageLink('isDark') isDark: boolean = false;
+  @State topBarHeight: number = 0;
+  @StorageProp('fontMeta') fontMeta: string = '13fp';
+  @StorageProp('fontCaption') fontCaption: string = '12fp';
+  @State unfollowedMode: FilterMode = 'off';
+  @State followedMode: FilterMode = 'off';
   private ctx!: common.Context;
 
   aboutToAppear(): void {
     this.ctx = getContext(this) as common.Context;
+    this.unfollowedMode = FilterSettingsRepository.getSmartMode(this.ctx, false);
+    this.followedMode = FilterSettingsRepository.getSmartMode(this.ctx, true);
   }
 
-  @Builder Header(title: string) {
-    Row() {
-      Text('‹')
-        .fontSize(28)
-        .fontColor($r('app.color.text_primary'))
-        .onClick(() => router.back({ url: '' }))
-        .padding({ left: 16, right: 8 })
-      Text(title)
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+  private onModeChange(followed: boolean, mode: FilterMode): void {
+    FilterSettingsRepository.setSmartMode(this.ctx, followed, mode);
+    if (followed) {
+      this.followedMode = mode;
+    } else {
+      this.unfollowedMode = mode;
     }
-    .width('100%')
-    .height(56)
-    .alignItems(VerticalAlign.Center)
-    .padding({ top: this.topSafeAreaVp })
   }
 
   private clearViewRecords(): void {
@@ -72,34 +72,16 @@ struct SmartFilterSettingsPage {
   }
 
   build() {
-    Column() {
-      this.Header('智能内容过滤')
+    Stack({ alignContent: Alignment.Top }) {
+      PageHeader({ title: '推荐次数过滤' })
+        .zIndex(2)
+        .onAreaChange((_old: Area, newValue: Area) => {
+          if (newValue.height > 0) {
+            this.topBarHeight = Number(newValue.height);
+          }
+        })
       Scroll() {
         Column({ space: 16 }) {
-          Text('总开关位于「推荐系统与内容过滤」；关闭后以下设置均不生效。')
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-            .padding({ left: 16, right: 16 })
-
-          SettingsCard({ title: '规则' }) {
-            NumberSettingRow({
-              title: '展示达 N 次后屏蔽',
-              desc: '未关注作者的内容展示 N 次后自动屏蔽',
-              prefKey: FILTER_KEYS.smartViewThreshold,
-              defValue: 2,
-              minValue: 1,
-              maxValue: 99,
-              showDivider: true
-            })
-            BoolSettingRow({
-              title: '过滤低质推广内容',
-              desc: '含“小时前 / 分钟前 / 浏览”等字样',
-              prefKey: FILTER_KEYS.smartLowQuality,
-              defValue: true,
-              showDivider: false
-            })
-          }
-
           SettingsCard({ title: '推荐次数标记' }) {
             BoolSettingRow({
               title: '显示推荐次数角标',
@@ -110,10 +92,58 @@ struct SmartFilterSettingsPage {
             })
           }
 
+          SettingsCard({ title: '规则（未关注作者）' }) {
+            ModeSelectRow({
+              title: '模式',
+              mode: this.unfollowedMode,
+              onChange: (m: FilterMode) => this.onModeChange(false, m)
+            })
+            NumberSettingRow({
+              title: '展示达 N 次后屏蔽',
+              desc: '未关注作者的内容展示 N 次后自动屏蔽',
+              prefKey: FILTER_KEYS.smartViewThresholdUnfollowed,
+              defValue: 2,
+              minValue: 1,
+              maxValue: 99,
+              showDivider: true
+            })
+            BoolSettingRow({
+              title: '过滤低质推广内容',
+              desc: '含“小时前 / 分钟前 / 浏览”等字样',
+              prefKey: FILTER_KEYS.smartLowQualityUnfollowed,
+              defValue: true,
+              showDivider: false
+            })
+          }
+
+          SettingsCard({ title: '规则（已关注作者）' }) {
+            ModeSelectRow({
+              title: '模式',
+              mode: this.followedMode,
+              onChange: (m: FilterMode) => this.onModeChange(true, m)
+            })
+            NumberSettingRow({
+              title: '展示达 N 次后屏蔽',
+              desc: '已关注作者的内容展示 N 次后自动屏蔽',
+              prefKey: FILTER_KEYS.smartViewThresholdFollowed,
+              defValue: 2,
+              minValue: 1,
+              maxValue: 99,
+              showDivider: true
+            })
+            BoolSettingRow({
+              title: '过滤低质推广内容',
+              desc: '含“小时前 / 分钟前 / 浏览”等字样',
+              prefKey: FILTER_KEYS.smartLowQualityFollowed,
+              defValue: true,
+              showDivider: false
+            })
+          }
+
           SettingsCard({ title: '记录管理' }) {
             NumberSettingRow({
               title: '记录过期天数',
-              desc: '浏览记录超过此天数自动清理',
+              desc: '浏览记录超过此天数自动清理（清理后重新推送、计数归 1）',
               prefKey: FILTER_KEYS.smartExpireDays,
               defValue: 7,
               minValue: 1,
@@ -145,8 +175,9 @@ struct SmartFilterSettingsPage {
         }
         .padding({ left: 16, right: 16, top: 8, bottom: 32 })
       }
-      .layoutWeight(1)
       .width('100%')
+      .height('100%')
+      .padding({ top: this.topBarHeight })
     }
     .width('100%')
     .height('100%')

@@ -2,6 +2,8 @@ import common from '@ohos.app.ability.common';
 import { promptAction, router } from '@kit.ArkUI';
 import { AppearanceThemeMode } from '../services/AppearanceSettingsRepository';
 import { ThemeColors } from '../services/ThemeColors';
+import { ContentCard } from '../components/ContentCard';
+import { PageHeader } from '../components/PageHeader';
 import { DEFAULT_SESSION_SNAPSHOT, HomeFeedItem, SessionSnapshot, TopicDetail } from '../models/ZhihuModels';
 import { TopicFeedTab, TopicIdeasSort, TopicService, TopicDiscussionSort } from '../services/TopicService';
 import { openZhihuContentTarget } from '../services/ZhihuNavigation';
@@ -25,8 +27,20 @@ function errMsg(error: Object): string {
 @Entry
 @Component
 struct Topic {
-  @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
+  // 软尺寸：由 DesignMetrics 按「官方基线 × 用户倍率」算出后写入 AppStorage，
+  // 默认值与迁移前完全一致，故视觉零变化；用户调整字号/密度后本页自动重排。
+  @StorageProp('fontCaption') private fontCaption: string = '12fp';
+  @StorageProp('fontMeta') private fontMeta: string = '13fp';
+  @StorageProp('fontSecondary') private fontSecondary: string = '14fp';
+  @StorageProp('fontBody') private fontBody: string = '16fp';
+  @StorageProp('fontSubhead') private fontSubhead: string = '18fp';
+  @StorageProp('fontHeading') private fontHeading: string = '20fp';
+  @StorageProp('cardRadius') private cardRadius: number = 16;
+  @StorageProp('pillRadius') private pillRadius: number = 18;
+  @StorageProp('cardPadding') private cardPadding: number = 16;
+
   @StorageProp('bottomSafeAreaVp') private bottomSafeAreaVp: number = 0;
+  @State topBarHeight: number = 0;
   @StorageProp('themeMode') private themeMode: AppearanceThemeMode = 'system';
   @StorageProp('sessionSnapshot') private sessionSnapshot: SessionSnapshot = DEFAULT_SESSION_SNAPSHOT;
   @StorageLink('oledBlack') private oledBlack: boolean = false;
@@ -202,7 +216,7 @@ struct Topic {
     Column({ space: 10 }) {
       if (item.title.length > 0) {
         Text(item.title)
-          .fontSize(17)
+          .fontSize(this.fontSubhead)
           .fontWeight(FontWeight.Bold)
           .lineHeight(24)
           .fontColor($r('app.color.text_primary'))
@@ -213,7 +227,7 @@ struct Topic {
 
       if (item.summary.length > 0) {
         Text(item.summary)
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .lineHeight(20)
           .fontColor($r('app.color.text_secondary'))
           .maxLines(3)
@@ -223,7 +237,7 @@ struct Topic {
 
       Row({ space: 10 }) {
         Text(item.details)
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -234,10 +248,10 @@ struct Topic {
       .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .padding(16)
+    .padding(this.cardPadding)
     .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
     .border({ width: 1, color: $r('app.color.card_border') })
-    .borderRadius(18)
+    .borderRadius(this.pillRadius)
     .onClick(() => {
       this.openContent(item);
     })
@@ -247,37 +261,37 @@ struct Topic {
   private Footer(): void {
     if (this.feedLoading[this.selectedTab] && !this.feedLoaded[this.selectedTab]) {
       Text('正在加载…')
-        .fontSize(13).fontColor($r('app.color.text_secondary'))
+        .fontSize(this.fontMeta).fontColor($r('app.color.text_secondary'))
         .width('100%').textAlign(TextAlign.Center).padding({ top: 24, bottom: 24 })
         .onClick(() => {})
     } else if (this.feedError[this.selectedTab].length > 0 && this.feedItems[this.selectedTab].length === 0) {
       Column({ space: 12 }) {
-        Text(this.feedError[this.selectedTab]).fontSize(14).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
+        Text(this.feedError[this.selectedTab]).fontSize(this.fontSecondary).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
         Text('重新加载')
-          .fontSize(14).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
+          .fontSize(this.fontSecondary).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
           .padding({ left: 18, right: 18, top: 10, bottom: 10 })
-          .backgroundColor($r('app.color.action_background')).borderRadius(18)
+          .backgroundColor($r('app.color.action_background')).borderRadius(this.pillRadius)
           .onClick(() => { this.loadFeed(this.selectedTab, false); })
       }
       .width('100%').alignItems(HorizontalAlign.Center).padding({ top: 40, bottom: 40 })
     } else if (this.feedItems[this.selectedTab].length === 0 && this.feedLoaded[this.selectedTab]) {
       Text('这里还没有内容')
-        .fontSize(14).fontColor($r('app.color.text_secondary'))
+        .fontSize(this.fontSecondary).fontColor($r('app.color.text_secondary'))
         .width('100%').textAlign(TextAlign.Center).padding({ top: 40, bottom: 40 })
     } else if (this.feedLoading[this.selectedTab]) {
       Text('正在加载更多…')
-        .fontSize(12).fontColor($r('app.color.text_secondary'))
+        .fontSize(this.fontCaption).fontColor($r('app.color.text_secondary'))
         .width('100%').textAlign(TextAlign.Center).padding({ top: 16, bottom: 16 })
     } else if (this.feedIsEnd[this.selectedTab]) {
       Text('没有更多了')
-        .fontSize(12).fontColor($r('app.color.text_tertiary'))
+        .fontSize(this.fontCaption).fontColor($r('app.color.text_tertiary'))
         .width('100%').textAlign(TextAlign.Center).padding({ top: 16, bottom: 16 })
     } else {
       Text('加载更多')
-        .fontSize(12).fontColor($r('app.color.action_text'))
+        .fontSize(this.fontCaption).fontColor($r('app.color.action_text'))
         .padding({ left: 14, right: 14, top: 8, bottom: 8 })
         .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
-        .borderRadius(16).border({ width: 1, color: $r('app.color.card_border') })
+        .borderRadius(this.cardRadius).border({ width: 1, color: $r('app.color.card_border') })
         .onClick(() => { this.loadFeed(this.selectedTab, true); })
         .margin({ top: 8, bottom: 8 })
     }
@@ -321,46 +335,12 @@ struct Topic {
   @Builder
   private SortChip(label: string, selected: boolean, onClick: () => void): void {
     Text(label)
-      .fontSize(13)
+      .fontSize(this.fontMeta)
       .fontColor(selected ? $r('app.color.action_text') : $r('app.color.text_secondary'))
       .padding({ left: 16, right: 16, top: 8, bottom: 8 })
       .backgroundColor(selected ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
-      .borderRadius(16)
+      .borderRadius(this.cardRadius)
       .onClick(onClick)
-  }
-
-  // ---------- 顶栏（固定，不跟随下滑）----------
-  @Builder
-  private TopBar(): void {
-    Row({ space: 12 }) {
-      Image($r('app.media.arrow_back'))
-        .width(22).height(22)
-        .fillColor($r('app.color.text_primary'))
-        .renderMode(ImageRenderMode.Template)
-        .onClick(() => { router.back({ url: '' }); })
-
-      Text(this.topicName.length > 0 ? this.topicName : '话题')
-        .fontSize(18).fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-        .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
-        .layoutWeight(1)
-
-      if (this.detail !== null) {
-        Text(this.detail.isFollowing ? '已关注' : '关注')
-          .fontSize(14)
-          .fontColor(this.detail.isFollowing ? $r('app.color.text_secondary') : $r('app.color.action_text'))
-          .padding({ left: 18, right: 18, top: 8, bottom: 8 })
-          .backgroundColor(this.detail.isFollowing ? ThemeColors.cardBackground(this.oledBlack, this.isDark) : $r('app.color.action_background'))
-          .border({ width: 1, color: this.detail.isFollowing ? $r('app.color.card_border') : $r('app.color.action_background') })
-          .borderRadius(18)
-          .onClick(() => { this.doToggleFollow(); })
-      }
-    }
-    .width('100%')
-    .height(56)
-    .alignItems(VerticalAlign.Center)
-    .padding({ left: 16, right: 16 })
-    .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
   }
 
   // ---------- 详情卡片（头像 + 统计 + 简介）----------
@@ -375,7 +355,7 @@ struct Topic {
           } else {
             Column() {
               Text(this.detail.name.slice(0, 1))
-                .fontSize(20).fontWeight(FontWeight.Bold).fontColor($r('app.color.action_text'))
+                .fontSize(this.fontHeading).fontWeight(FontWeight.Bold).fontColor($r('app.color.action_text'))
             }
             .width(56).height(56).justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
             .backgroundColor($r('app.color.action_background')).borderRadius(28)
@@ -383,11 +363,11 @@ struct Topic {
 
           Column({ space: 4 }) {
             Text(this.detail.name)
-              .fontSize(18).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
+              .fontSize(this.fontSubhead).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
               .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
             if (this.detail.excerpt.length > 0) {
               Text(this.detail.excerpt)
-                .fontSize(13).fontColor($r('app.color.text_secondary'))
+                .fontSize(this.fontMeta).fontColor($r('app.color.text_secondary'))
                 .maxLines(this.excerptExpanded ? 10 : 2)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .onClick(() => { this.excerptExpanded = !this.excerptExpanded; })
@@ -407,22 +387,22 @@ struct Topic {
         .width('100%').padding({ top: 4 })
       } else if (this.detailLoading) {
         Text('正在加载话题信息…')
-          .fontSize(14).fontColor($r('app.color.text_secondary'))
+          .fontSize(this.fontSecondary).fontColor($r('app.color.text_secondary'))
           .width('100%').textAlign(TextAlign.Center).padding({ top: 20, bottom: 20 })
       } else if (this.detailError.length > 0) {
         Column({ space: 12 }) {
-          Text(this.detailError).fontSize(14).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
+          Text(this.detailError).fontSize(this.fontSecondary).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
           Text('重新加载')
-            .fontSize(14).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
+            .fontSize(this.fontSecondary).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
             .padding({ left: 18, right: 18, top: 10, bottom: 10 })
-            .backgroundColor($r('app.color.action_background')).borderRadius(18)
+            .backgroundColor($r('app.color.action_background')).borderRadius(this.pillRadius)
             .onClick(() => { this.loadDetail(); })
         }
         .width('100%').alignItems(HorizontalAlign.Center).padding({ top: 40, bottom: 40 })
       }
     }
-    .width('100%').padding(16).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-    .borderRadius(16).border({ width: 1, color: $r('app.color.card_border') })
+    .width('100%').padding(this.cardPadding).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+    .borderRadius(this.cardRadius).border({ width: 1, color: $r('app.color.card_border') })
     .margin({ left: 16, right: 16 })
   }
 
@@ -430,9 +410,9 @@ struct Topic {
   private StatItem(label: string, value: number): void {
     Column({ space: 2 }) {
       Text(`${value}`)
-        .fontSize(16).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
+        .fontSize(this.fontBody).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
       Text(label)
-        .fontSize(12).fontColor($r('app.color.text_secondary'))
+        .fontSize(this.fontCaption).fontColor($r('app.color.text_secondary'))
     }
     .alignItems(HorizontalAlign.Center)
     .layoutWeight(1)
@@ -444,12 +424,12 @@ struct Topic {
     Row({ space: 8 }) {
       ForEach(this.tabTitles, (title: string, index: number) => {
         Text(title)
-          .fontSize(15)
+          .fontSize(this.fontBody)
           .fontWeight(this.selectedTab === index ? FontWeight.Bold : FontWeight.Normal)
           .fontColor(this.selectedTab === index ? $r('app.color.action_text') : $r('app.color.text_secondary'))
           .padding({ left: 18, right: 18, top: 10, bottom: 10 })
           .backgroundColor(this.selectedTab === index ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
           .onClick(() => {
             this.selectedTab = index;
             this.ensureTabLoaded(index);
@@ -461,19 +441,37 @@ struct Topic {
   }
 
   build() {
-    Column() {
-      this.TopBar()
-      if (this.topicId.length > 0) {
-        this.DetailBody()
+    Stack({ alignContent: Alignment.Top }) {
+      PageHeader({
+        title: this.topicName.length > 0 ? this.topicName : '话题',
+        rightPill: this.detail !== null ? {
+          text: this.detail.isFollowing ? '已关注' : '关注',
+          active: this.detail.isFollowing,
+          action: () => { this.doToggleFollow(); }
+        } : undefined
+      })
+        .zIndex(2)
+        .onAreaChange((_old: Area, newValue: Area) => {
+          if (newValue.height > 0) {
+            this.topBarHeight = Number(newValue.height);
+          }
+        })
+
+      Column() {
+        if (this.topicId.length > 0) {
+          this.DetailBody()
+        }
+        this.TabBar()
+        if (this.topicId.length > 0) {
+          this.FeedList()
+        }
       }
-      this.TabBar()
-      if (this.topicId.length > 0) {
-        this.FeedList()
-      }
+      .width('100%')
+      .height('100%')
+      .padding({ top: this.topBarHeight })
     }
     .width('100%')
     .height('100%')
-    .padding({ top: this.topSafeAreaVp })
     .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }

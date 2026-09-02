@@ -11,6 +11,14 @@ import {
 import { resolveZhihuContent } from '../services/ZhihuContentResolver';
 import { CollectionService } from '../services/CollectionService';
 import { AppearanceThemeMode } from '../services/AppearanceSettingsRepository';
+import { PageHeader } from '../components/PageHeader';
+import { ThemeColors } from '../services/ThemeColors';
+import {
+  exportCollectionToZip,
+  saveBinaryFile,
+  CollectionExportProgress,
+  CollectionExportResult
+} from '../services/ExportService';
 
 function formatCounter(value: number, unit: string): string {
   if (value >= 10000) {
@@ -40,6 +48,7 @@ interface CollectionDetailParams {
 struct CollectionDetail {
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
   @StorageProp('bottomSafeAreaVp') private bottomSafeAreaVp: number = 0;
+  @State topBarHeight: number = 0;
   @StorageProp('themeMode') private themeMode: AppearanceThemeMode = 'system';
   @State private collectionId: string = '';
   @State private pageTitle: string = '收藏夹';
@@ -50,6 +59,17 @@ struct CollectionDetail {
   @State private loading: boolean = false;
   @State private loadingMore: boolean = false;
   @State private error: string = '';
+
+  // ===== 整夹导出 =====
+  @State private exporting: boolean = false;
+  @State private exportProgress: CollectionExportProgress = {
+    total: 0, processed: 0, success: 0, skipped: 0, failed: 0, currentTitle: ''
+  };
+  @State private exportResult: CollectionExportResult | undefined = undefined;
+  @State private exportZipPath: string = '';
+  @State private showExportOptionsSheet: boolean = false;
+  @State private exportIncludeImages: boolean = true;
+  @State private showExportProgressSheet: boolean = false;
 
   aboutToAppear(): void {
     const params = router.getParams() as CollectionDetailParams;
@@ -71,6 +91,154 @@ struct CollectionDetail {
       message,
       duration: 1800
     });
+  }
+
+  // ===== 整夹导出 =====
+  private onExportClicked(): void {
+    if (this.items.length === 0) {
+      this.showToast('收藏夹为空，暂无可导出内容');
+      return;
+    }
+    this.showExportOptionsSheet = true;
+  }
+
+  private async startExport(includeImages: boolean): Promise<void> {
+    if (this.exporting) {
+      return;
+    }
+    this.showExportOptionsSheet = false;
+    this.exporting = true;
+    this.exportResult = undefined;
+    this.exportZipPath = '';
+    this.showExportProgressSheet = true;
+
+    try {
+      const result = await exportCollectionToZip(
+        this.context(),
+        this.pageTitle,
+        this.items,
+        includeImages,
+        (progress: CollectionExportProgress) => {
+          this.exportProgress = progress;
+        }
+      );
+      this.exportResult = result;
+      if (result.zipFilePath !== undefined) {
+        this.exportZipPath = result.zipFilePath;
+      }
+      if (result.success === 0) {
+        this.showToast('没有可导出的内容');
+      }
+    } catch (_e) {
+      this.showToast('导出失败');
+    } finally {
+      this.exporting = false;
+    }
+  }
+
+  private async onSaveAndShare(): Promise<void> {
+    if (this.exportZipPath.length === 0 || this.exportResult === undefined) {
+      return;
+    }
+    const fileName = `zhihu++_${this.pageTitle}_zip`;
+    try {
+      await saveBinaryFile(this.context(), this.exportZipPath, fileName);
+      this.showExportProgressSheet = false;
+      this.showToast('已保存');
+    } catch (_e) {
+      this.showToast('保存失败');
+    }
+  }
+
+  @Builder
+  private ExportOptionsSheet(): void {
+    Column({ space: 16 }) {
+      Text('选择导出内容')
+        .fontSize(15)
+        .fontWeight(FontWeight.Bold)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+
+      Row() {
+        Text('包含图片（勾选后图片将下载并内联到 HTML）')
+          .fontSize(13)
+          .fontColor($r('app.color.text_secondary'))
+          .layoutWeight(1)
+        Toggle({ type: ToggleType.Switch, isOn: this.exportIncludeImages })
+          .onChange((isOn: boolean) => {
+            this.exportIncludeImages = isOn;
+          })
+      }
+      .width('100%')
+
+      Button('开始导出')
+        .width('100%')
+        .height(44)
+        .type(ButtonType.Capsule)
+        .backgroundColor($r('app.color.action_text'))
+        .fontColor('#FFFFFFFF')
+        .onClick(() => {
+          this.startExport(this.exportIncludeImages);
+        })
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, top: 16, bottom: 24 })
+  }
+
+  @Builder
+  private ExportProgressSheet(): void {
+    Column({ space: 16 }) {
+      Progress({
+        value: this.exportProgress.total > 0
+          ? Math.round((this.exportProgress.processed / this.exportProgress.total) * 100)
+          : 0,
+        total: 100,
+        type: ProgressType.Linear
+      })
+      .width('100%')
+
+      Text(this.exporting
+        ? `处理中 ${this.exportProgress.processed}/${this.exportProgress.total} · 成功 ${this.exportProgress.success} · 失败 ${this.exportProgress.failed}`
+        : `完成：成功 ${this.exportResult?.success ?? 0}，跳过 ${this.exportResult?.skipped ?? 0}，失败 ${this.exportResult?.failed ?? 0}`)
+        .fontSize(13)
+        .fontColor($r('app.color.text_secondary'))
+        .width('100%')
+
+      if (this.exportProgress.currentTitle.length > 0 && this.exporting) {
+        Text(this.exportProgress.currentTitle)
+          .fontSize(12)
+          .fontColor($r('app.color.text_secondary'))
+          .width('100%')
+          .maxLines(2)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+
+      Row({ space: 12 }) {
+        if (!this.exporting && this.exportZipPath.length > 0) {
+          Button('保存到本地')
+            .layoutWeight(1)
+            .height(40)
+            .type(ButtonType.Capsule)
+            .backgroundColor($r('app.color.action_text'))
+            .fontColor('#FFFFFFFF')
+            .onClick(() => {
+              this.onSaveAndShare();
+            })
+        }
+        Button(this.exporting ? '后台运行' : '完成')
+          .layoutWeight(1)
+          .height(40)
+          .type(ButtonType.Capsule)
+          .backgroundColor(ThemeColors.cardBackground(false, false))
+          .fontColor($r('app.color.text_primary'))
+          .onClick(() => {
+            this.showExportProgressSheet = false;
+          })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 20, right: 20, top: 16, bottom: 24 })
   }
 
   private async loadAll(): Promise<void> {
@@ -348,11 +516,27 @@ struct CollectionDetail {
   }
 
   build() {
-    Column() {
-      this.TopBar()
-      this.StatsHeader()
-
+    Stack({ alignContent: Alignment.Top }) {
+      // ===== 背景内容层：List 直接放 Stack，包含 StatsHeader 当第一个 ListItem =====
       List({ space: 12 }) {
+        // 顶部让位占位（同通知页写法）：滚动时内容钻到顶栏底下，模糊生效
+        ListItem() {
+          Column()
+            .width('100%')
+            .height(this.topBarHeight)
+        }
+
+        // StatsHeader 放在 List 里，跟随滑动
+        if (this.collectionStatsText().length > 0) {
+          ListItem() {
+            Text(this.collectionStatsText())
+              .fontSize(13)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 8, bottom: 4 })
+          }
+        }
+
         ForEach(this.items, (item: HomeFeedItem) => {
           ListItem() {
             this.FeedCard(item);
@@ -364,17 +548,54 @@ struct CollectionDetail {
         }
       }
       .width('100%')
-      .layoutWeight(1)
+      .height('100%')
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
       .onReachEnd(() => {
         this.loadMore();
       })
-      .padding({ left: 16, right: 16, top: 12 })
+      .padding({ left: 16, right: 16, bottom: this.bottomSafeAreaVp + 16 })
+
+      // ===== 浮层顶栏（showBack 默认 true 自带返回键，右侧只放导出） =====
+      PageHeader({
+        title: this.pageTitle,
+        rightButtons: [
+          {
+            icon: $r('sys.symbol.square_and_arrow_down'),
+            action: () => { this.onExportClicked(); }
+          }
+        ]
+      })
+      .zIndex(2)
+      .onAreaChange((_old: Area, newValue: Area) => {
+        if (newValue.height > 0 && Number(newValue.height) !== this.topBarHeight) {
+          this.topBarHeight = Number(newValue.height);
+        }
+      })
+
+      // ===== 导出选项 Sheet =====
+      Column() {}
+        .width(1)
+        .height(1)
+        .bindSheet($$this.showExportOptionsSheet, this.ExportOptionsSheet(), {
+          showClose: true,
+          dragBar: true,
+          preferType: SheetType.BOTTOM
+        })
+
+      // ===== 导出进度 Sheet =====
+      Column() {}
+        .width(1)
+        .height(1)
+        .bindSheet($$this.showExportProgressSheet, this.ExportProgressSheet(), {
+          showClose: true,
+          dragBar: true,
+          preferType: SheetType.BOTTOM
+        })
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('app.color.page_background'))
+    .backgroundColor(ThemeColors.feedBackground(false, false))
     .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 }

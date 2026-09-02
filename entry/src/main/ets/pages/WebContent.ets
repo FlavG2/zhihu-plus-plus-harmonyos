@@ -8,6 +8,7 @@ import { fileIo } from '@kit.CoreFileKit';
 import fileUri from '@ohos.file.fileuri';
 import photoAccessHelper from '@ohos.file.photoAccessHelper';
 import { pasteboard } from '@kit.BasicServicesKit';
+import { PageHeader } from '../components/PageHeader';
 
 interface WebContentParams {
   title?: string;
@@ -21,19 +22,19 @@ function isImageUrl(url: string): boolean {
 @Entry
 @Component
 struct WebContent {
-  @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
-  @StorageProp('bottomSafeAreaVp') private bottomSafeAreaVp: number = 0;
+  @StorageProp('isDark') private isDark: boolean = false;
+  @StorageProp('fontHeading') private fontHeading: string = '20fp';
+  @StorageProp('fontMeta') private fontMeta: string = '13fp';
   private readonly webController: webview.WebviewController = new webview.WebviewController();
   @State private pageTitle: string = '内容';
   @State private pageUrl: string = '';
   @State private isImage: boolean = false;
-  @State private showLinkMenu: boolean = false;
 
   aboutToAppear(): void {
     const params = router.getParams() as WebContentParams;
     this.pageTitle = typeof params.title === 'string' && params.title.length > 0 ? params.title : '内容';
     this.pageUrl = typeof params.url === 'string' ? params.url : '';
-    this.isImage = isImageUrl(this.pageUrl);
+    this.isImage = this.pageTitle === '图片' || isImageUrl(this.pageUrl);
   }
 
   /** 保存到图库（复用 Article.ets 的 createAsset 逻辑） */
@@ -140,45 +141,23 @@ struct WebContent {
     }
   }
 
+  private buildMenuItems(): Array<MenuElement> {
+    const items: Array<MenuElement> = [];
+    if (this.isImage) {
+      items.push({ value: '保存图片', action: () => { this.saveImageToGallery(); } });
+      items.push({ value: '分享图片', action: () => { this.shareImageFile(); } });
+    }
+    items.push({ value: '复制链接', action: () => { this.copyLink(); } });
+    items.push({ value: '在浏览器中打开', action: () => { this.openInBrowser(); } });
+    return items;
+  }
+
   build() {
     Column() {
-      // 顶部栏
-      Row() {
-        Text('返回')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.action_text'))
-          .padding({ left: 14, right: 14, top: 8, bottom: 8 })
-          .backgroundColor($r('app.color.action_background'))
-          .borderRadius(16)
-          .onClick(() => { router.back({ url: '' }); })
-
-        Text(this.pageTitle)
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-          .margin({ left: 12 })
-
-        if (!this.isImage) {
-          Text('⋯')
-            .fontSize(22)
-            .fontColor($r('app.color.action_text'))
-            .padding({ left: 14, right: 14, top: 8, bottom: 8 })
-            .onClick(() => { this.showLinkMenu = !this.showLinkMenu; })
-            .bindMenu(this.showLinkMenu, [
-              { value: '复制链接', action: () => { this.showLinkMenu = false; this.copyLink(); } },
-              { value: '在网页中打开', action: () => { this.showLinkMenu = false; this.openInBrowser(); } }
-            ])
-        }
-      }
-      .width('100%')
-      .padding({ left: 20, right: 20, top: this.topSafeAreaVp + 16, bottom: 12 })
-      .backgroundColor($r('app.color.glass_top_bar_background'))
-      .border({ width: { bottom: 1 }, color: $r('app.color.glass_top_bar_border') })
-      .backdropBlur(24)
+      PageHeader({
+        title: this.pageTitle,
+        rightButtons: [{ icon: $r('sys.symbol.ellipsis_circle'), menu: this.buildMenuItems() }]
+      })
 
       // 内容区
       if (this.pageUrl.length > 0) {
@@ -187,51 +166,19 @@ struct WebContent {
           Web({ src: this.pageUrl, controller: this.webController })
             .width('100%')
             .layoutWeight(1)
-
-          // 图片模式下：底部浮动操作按钮
-          if (this.isImage) {
-            Row({ space: 16 }) {
-              // 保存到图库
-              Row({ space: 4 }) {
-                Text('💾')
-                  .fontSize(16)
-                Text('保存')
-                  .fontSize(14)
-                  .fontColor('#FFFFFF')
-              }
-              .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-              .backgroundColor('rgba(0,0,0,0.55)')
-              .borderRadius(20)
-              .onClick(() => { this.saveImageToGallery(); })
-
-              // 分享图片文件
-              Row({ space: 4 }) {
-                Text('📤')
-                  .fontSize(16)
-                Text('分享')
-                  .fontSize(14)
-                  .fontColor('#FFFFFF')
-              }
-              .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-              .backgroundColor('rgba(0,0,0,0.55)')
-              .borderRadius(20)
-              .onClick(() => { this.shareImageFile(); })
-            }
-            .width('100%')
-            .justifyContent(FlexAlign.Center)
-            .position({ bottom: this.bottomSafeAreaVp + 16 })
-          }
+            // 图片加载前 WebView 默认白底会闪白，按主题设底色消除（深色 #0F141A / 浅色 #F5F7FB）
+            .backgroundColor(this.isDark ? '#0F141A' : '#F5F7FB')
         }
         .width('100%')
         .layoutWeight(1)
       } else {
         Column({ space: 10 }) {
           Text('缺少内容地址')
-            .fontSize(20)
+            .fontSize(this.fontHeading)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
           Text('当前页面没有可打开的链接。')
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor($r('app.color.text_secondary'))
         }
         .width('100%')

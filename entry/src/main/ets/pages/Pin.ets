@@ -1,5 +1,5 @@
 import common from '@ohos.app.ability.common';
-import { promptAction, router, window } from '@kit.ArkUI';
+import { promptAction, router, window, curves } from '@kit.ArkUI';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import { pasteboard } from '@kit.BasicServicesKit';
@@ -15,6 +15,9 @@ import { PeopleService, ZhihuPin, ZhihuPinTopic } from '../services/PeopleServic
 import { CommentService } from '../services/CommentService';
 import { ZhihuSessionRepository } from '../services/ZhihuSessionRepository';
 import { ZhihuRichWeb } from '../components/ZhihuRichWeb';
+import { ContentTopBar } from '../components/ContentTopBar';
+import { HdsTabs, HdsTabsController } from '@kit.UIDesignKit';
+import { ZhihuMaterial } from '../services/ZhihuMaterial';
 import { TtsController } from '../services/TtsService';
 import {
   ArticleExportMeta,
@@ -208,12 +211,32 @@ function updateCommentLike(comments: ZhihuCommentItem[], commentId: string, like
 @Entry
 @Component
 struct Pin {
+  // 软尺寸：由 DesignMetrics 按「官方基线 × 用户倍率」算出后写入 AppStorage，
+  // 默认值与迁移前完全一致，故视觉零变化；用户调整字号/密度后本页自动重排。
+  @StorageProp('fontSymbol') private fontSymbol: string = '24fp';
+  @StorageProp('fontCaption') private fontCaption: string = '12fp';
+  @StorageProp('fontMeta') private fontMeta: string = '13fp';
+  @StorageProp('fontSecondary') private fontSecondary: string = '14fp';
+  @StorageProp('fontBody') private fontBody: string = '16fp';
+  @StorageProp('fontSubhead') private fontSubhead: string = '18fp';
+  @StorageProp('fontHeading') private fontHeading: string = '20fp';
+  @StorageProp('fontTitle') private fontTitle: string = '22fp';
+  @StorageProp('fontLargeTitle') private fontLargeTitle: string = '26fp';
+  @StorageProp('cardRadius') private cardRadius: number = 16;
+  @StorageProp('pillRadius') private pillRadius: number = 18;
+  @StorageProp('buttonRadius') private buttonRadius: number = 20;
+
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
   @StorageProp('bottomSafeAreaVp') private bottomSafeAreaVp: number = 0;
   @StorageProp('themeMode') private themeMode: AppearanceThemeMode = 'system';
   @StorageProp('sessionSnapshot') private sessionSnapshot: SessionSnapshot = DEFAULT_SESSION_SNAPSHOT;
   @StorageLink('oledBlack') private oledBlack: boolean = false;
   @StorageLink('isDark') private isDark: boolean = false;
+
+  @StorageProp('materialLevel') private materialLevel: number = 10;
+
+
+  private pinTabsController: HdsTabsController = new HdsTabsController();
 
   @State private pinId: string = '';
   @State private fallbackUrl: string = '';
@@ -270,11 +293,13 @@ struct Pin {
   @State private bottomBarOffsetY: number = 0;        // 0 完全显示；=bottomBarHideDistance 时滑出屏幕下沿
   private bottomBarHideDistance: number = 96;          // 隐藏位移：药丸高 + 底距 + 安全区
   private bottomBarSnapTimer: number = -1;             // 滚动停止防抖计时器
+  private bottomBarTweenTimer: number = -1;            // 底栏逐帧动画计时器
   private lastScrollTop: number = 0;                   // 上一次滚动偏移，用于算 delta
 
   // 顶栏（XX的想法）：顶部可见，下滑隐藏、上滑显示（对标回答页 Article.ets）
   @State private topBarOffsetY: number = 0;            // 0 完全显示；=-topBarHeight 时滑出屏幕顶部
   @State private topBarHeight: number = 0;             // 顶栏实测高度，用于隐藏位移终点
+  private wasAtTop: boolean = true;                    // atTop 翻转检测，用于回弹弹簧
 
   // 沉浸模式（对标 Article.ets）
   @State private immersiveMode: boolean = false;
@@ -883,57 +908,6 @@ struct Pin {
     router.pushUrl({ url: 'pages/People', params: { urlToken } });
   }
 
-  // ---------- 顶部栏 ----------
-  @Builder
-  private TopBar(): void {
-    Row({ space: 10 }) {
-      Image($r('app.media.arrow_back'))
-        .width(22)
-        .height(22)
-        .renderMode(ImageRenderMode.Template)
-        .fillColor($r('app.color.action_text'))
-        .syncLoad(true)
-        .onClick(() => {
-          router.back({ url: '' });
-        })
-
-      Text(this.pin !== null && this.pin.author.name.length > 0 ? `${this.pin.author.name}的想法` : '想法')
-        .fontSize(17)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      // 三点菜单（对标回答页 Article.ets）
-      Text('⋮')
-        .fontSize(20)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-        .padding({ left: 14, right: 14, top: 6, bottom: 6 })
-        .bindMenu([
-          { value: '在知乎中打开', action: () => this.openInZhihuApp() },
-          { value: '复制链接', action: () => this.copyCurrentLink() },
-          { value: '分享', action: () => this.systemShare() },
-          { value: '进入沉浸', action: () => this.enterImmersive() },
-          { value: this.ttsSpeaking ? '停止朗读' : '开始朗读', action: () => this.toggleTts() },
-          { value: '导出…', action: () => { this.showExportSheet = true; } }
-        ])
-    }
-      .alignItems(VerticalAlign.Center)
-      .width('100%')
-      .padding({ left: 12, right: 16, top: this.topSafeAreaVp + 12, bottom: 12 })
-      .backgroundColor($r('app.color.glass_top_bar_background'))
-      .border({ width: { bottom: 1 }, color: $r('app.color.glass_top_bar_border') })
-      .backdropBlur(24)
-      .translate({ y: this.topBarOffsetY })
-      .onAreaChange((_old: Area, newValue: Area): void => {
-        if (newValue && newValue.height > 0) {
-          this.topBarHeight = Number(newValue.height);
-        }
-      })
-  }
-
   // ---------- 加载 / 错误 / 正文 三态 ----------
   // 作者卡片改为注入 WebView HTML（buildPinSummaryHtml），与正文同属一个 DOM 树，连成一块、
   // 随 WebView 内部滚动一起上滑消失；顶栏与底栏为 Stack 浮层，靠 onScrollChange 跟手显隐。
@@ -942,7 +916,7 @@ struct Pin {
   private LoadingState(): void {
     Column({ space: 10 }) {
       Text('正在加载想法...')
-        .fontSize(18)
+        .fontSize(this.fontSubhead)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
     }
@@ -957,16 +931,16 @@ struct Pin {
   private ErrorState(): void {
     Column({ space: 12 }) {
       Text(this.error.length > 0 ? this.error : '内容不存在')
-        .fontSize(15)
+        .fontSize(this.fontBody)
         .fontColor($r('app.color.error_text'))
         .textAlign(TextAlign.Center)
       Text('重新加载')
-        .fontSize(14)
+        .fontSize(this.fontSecondary)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.action_text'))
         .padding({ left: 18, right: 18, top: 10, bottom: 10 })
         .backgroundColor($r('app.color.action_background'))
-        .borderRadius(18)
+        .borderRadius(this.pillRadius)
         .onClick(() => {
           this.loadPin();
         })
@@ -1019,74 +993,51 @@ struct Pin {
     .layoutWeight(1)
   }
 
-  // ---------- 底部沉浸光感药丸栏（点赞 + 评论）—— 复用 Article.ets 的 ActionBarTab 结构 ----------
+  // ---------- 底部沉浸光感操作栏（点赞 + 评论）—— 改为 Navigation.toolBar 的 builder，使用真·HDS systemMaterialEffect ----------
   @Builder
-  private FloatingBottomBar(): void {
-    Stack({ alignContent: Alignment.Center }) {
-      Row({ space: 10 }) {
-        // 左组：点赞（👍 + 数字）药丸 —— 复用 Article.ic_agree
-        Row({ space: 4 }) {
-          Image($r('app.media.ic_agree'))
-            .draggable(false)
-            .width(20)
-            .height(20)
-            .renderMode(ImageRenderMode.Template)
-            .fillColor(this.liked ? '#FFFFFF' : $r('app.color.action_pill_icon'))
-            .syncLoad(true)
-            .interpolation(ImageInterpolation.Low)
-          Text(`${this.likeCount}`)
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(this.liked ? '#FFFFFF' : $r('app.color.action_pill_icon'))
-        }
-        .alignItems(VerticalAlign.Center)
-        .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-        .backgroundColor(this.liked ? $r('app.color.action_text') : $r('app.color.action_pill_button_inactive'))
-        .borderRadius(18)
-        .onClick(() => {
-          this.togglePinLike();
-        })
-
-        Blank()
-
-        // 右组：评论（💬 + 数字）药丸 —— 复用 Article.ic_comment
-        Row({ space: 4 }) {
-          Image($r('app.media.ic_comment'))
-            .draggable(false)
-            .width(20)
-            .height(20)
-            .renderMode(ImageRenderMode.Template)
-            .fillColor($r('app.color.action_pill_icon'))
-            .syncLoad(true)
-            .interpolation(ImageInterpolation.Low)
-          Text(`${this.pin?.commentCount ?? this.rootComments.length}`)
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.action_pill_icon'))
-        }
-        .alignItems(VerticalAlign.Center)
-        .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-        .backgroundColor($r('app.color.action_pill_button_inactive'))
-        .borderRadius(18)
-        .onClick(() => {
-          this.showRootCommentSheet = true;
-        })
+  private PinBottomBar(): void {
+    Row({ space: 10 }) {
+      // 左组：点赞药丸（对齐回答页 ActionBarTab，使用 hand_thumbsup_fill）
+      Row({ space: 4 }) {
+        SymbolGlyph($r('sys.symbol.hand_thumbsup_fill'))
+          .fontSize(this.fontHeading)
+          .fontColor([this.liked ? '#FFFFFF' : $r('app.color.action_pill_icon')])
+        Text(`${this.likeCount}`)
+          .fontSize(this.fontSecondary)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.liked ? '#FFFFFF' : $r('app.color.action_pill_icon'))
       }
-      .width('100%')
       .alignItems(VerticalAlign.Center)
-      .padding({ left: 14, right: 14, top: 6, bottom: 6 })
-      .backgroundColor($r('app.color.action_pill_background'))
-      .backdropBlur(24)
-      .border({ width: 1, color: $r('app.color.action_pill_border') })
-      .borderRadius(24)
+      .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+      .backgroundColor(this.liked ? $r('app.color.action_text') : ThemeColors.oledBlack(this.oledBlack, this.isDark, $r('app.color.action_pill_button_inactive')))
+      .borderRadius(this.pillRadius)
+      .onClick(() => {
+        this.togglePinLike();
+      })
+
+      Blank()
+
+      // 右组：评论药丸
+      Row({ space: 4 }) {
+        SymbolGlyph($r('sys.symbol.message'))
+          .fontSize(this.fontHeading)
+          .fontColor([$r('app.color.action_pill_icon')])
+        Text(`${this.pin?.commentCount ?? this.rootComments.length}`)
+          .fontSize(this.fontSecondary)
+          .fontWeight(FontWeight.Medium)
+          .fontColor($r('app.color.action_pill_icon'))
+      }
+      .alignItems(VerticalAlign.Center)
+      .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+      .backgroundColor(ThemeColors.oledBlack(this.oledBlack, this.isDark, $r('app.color.action_pill_button_inactive')))
+      .borderRadius(this.pillRadius)
+      .onClick(() => {
+        this.showRootCommentSheet = true;
+      })
     }
     .width('100%')
-    .padding({ left: 24, right: 24, bottom: 12 + this.bottomSafeAreaVp })
-    .alignSelf(ItemAlign.Center)
-    .translate({ y: this.bottomBarOffsetY })
-    .opacity(Math.max(0, 1 - this.bottomBarOffsetY / this.bottomBarHideDistance))
-    .hitTestBehavior(HitTestMode.None)
-    .zIndex(20)
+    .alignItems(VerticalAlign.Center)
+    .padding({ left: 14, right: 14, top: 6, bottom: 6 })
   }
 
   // ===== 顶/底栏跟手显隐（对齐回答页 Article.ets updateBarsOnScroll）=====
@@ -1096,21 +1047,27 @@ struct Pin {
     const delta = topPx - this.lastScrollTop;
     this.lastScrollTop = topPx;
 
-    // 顶栏（XX的想法）：顶部可见，下滑隐藏，上滑显示
-    if (this.topBarHeight > 0) {
-      if (atTop) {
-        this.topBarOffsetY = 0;
-      } else if (delta > 0) {
-        this.topBarOffsetY = Math.max(-this.topBarHeight, this.topBarOffsetY - delta);
+    // 顶栏（XX的想法）：顶部可见，下滑隐藏，上滑显示；topBarHeight 未测得时给兜底，避免常驻
+    const topTotal = this.topBarHeight > 0 ? this.topBarHeight : (this.topSafeAreaVp + 56);
+    if (atTop) {
+      if (!this.wasAtTop) {
+        animateTo({ curve: curves.springMotion(), duration: 300 }, () => { this.topBarOffsetY = 0; });
       } else {
-        this.topBarOffsetY = Math.min(0, Math.max(-this.topBarHeight, this.topBarOffsetY - delta));
+        this.topBarOffsetY = 0;
       }
+    } else if (delta > 0) {
+      this.topBarOffsetY = Math.max(-topTotal, this.topBarOffsetY - delta);
+    } else {
+      this.topBarOffsetY = Math.min(0, Math.max(-topTotal, this.topBarOffsetY - delta));
     }
+    this.wasAtTop = atTop;
 
     // 底栏：纯 delta 跟手 + 滚动停止吸附最近端点（避免下滑途中误显）
     const barH = this.bottomBarHideDistance;
     if (Math.abs(delta) >= 1) {
       this.bottomBarOffsetY = Math.min(barH, Math.max(0, this.bottomBarOffsetY + delta));
+      this.pinTabsController.setTabBarTranslate({ x: 0, y: this.bottomBarOffsetY });
+      this.pinTabsController.setTabBarOpacity(Math.max(0, 1 - this.bottomBarOffsetY / barH));
       this.scheduleBottomBarSnap();
     }
   }
@@ -1122,11 +1079,54 @@ struct Pin {
     this.bottomBarSnapTimer = setTimeout(() => {
       const barH = this.bottomBarHideDistance;
       const target = this.bottomBarOffsetY > barH / 2 ? barH : 0;
-      animateTo({ duration: 160, curve: Curve.EaseOut }, () => {
-        this.bottomBarOffsetY = target;
-      });
+      this.animateBottomBarTo(target);
       this.bottomBarSnapTimer = -1;
     }, 120);
+  }
+
+  /** 用逐帧插值驱动 HdsTabs 浮动底栏的位移/透明度（对齐主页 animateHomeBarTo） */
+  private animateBottomBarTo(target: number): void {
+    if (this.bottomBarTweenTimer >= 0) {
+      clearInterval(this.bottomBarTweenTimer);
+      this.bottomBarTweenTimer = -1;
+    }
+    const barH = this.bottomBarHideDistance;
+    const start = this.bottomBarOffsetY;
+    const dist = target - start;
+    if (Math.abs(dist) < 1) {
+      this.pinTabsController.setTabBarTranslate({ x: 0, y: target });
+      this.pinTabsController.setTabBarOpacity(target >= barH ? 0 : 1);
+      this.bottomBarOffsetY = target;
+      return;
+    }
+    const duration = 160;
+    const startTime = Date.now();
+    this.bottomBarTweenTimer = setInterval(() => {
+      const t = Math.min(1, (Date.now() - startTime) / duration);
+      const eased = 1 - Math.pow(1 - t, 3); // easeOutCubic
+      this.bottomBarOffsetY = start + dist * eased;
+      this.pinTabsController.setTabBarTranslate({ x: 0, y: this.bottomBarOffsetY });
+      this.pinTabsController.setTabBarOpacity(Math.max(0, 1 - this.bottomBarOffsetY / barH));
+      if (t >= 1) {
+        clearInterval(this.bottomBarTweenTimer);
+        this.bottomBarTweenTimer = -1;
+      }
+    }, 16);
+  }
+
+  /** 立即复位底栏到完全显示 */
+  private resetBottomBar(): void {
+    if (this.bottomBarTweenTimer >= 0) {
+      clearInterval(this.bottomBarTweenTimer);
+      this.bottomBarTweenTimer = -1;
+    }
+    if (this.bottomBarSnapTimer >= 0) {
+      clearTimeout(this.bottomBarSnapTimer);
+      this.bottomBarSnapTimer = -1;
+    }
+    this.bottomBarOffsetY = 0;
+    this.pinTabsController.setTabBarTranslate({ x: 0, y: 0 });
+    this.pinTabsController.setTabBarOpacity(1);
   }
 
   private clearBottomBarSnap(): void {
@@ -1142,11 +1142,11 @@ struct Pin {
     Column() {
       Column({ space: 12 }) {
         Text('评论')
-          .fontSize(20)
+          .fontSize(this.fontHeading)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
         Text(`${this.pin?.commentCount ?? this.rootComments.length} 条评论`)
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
 
         Row({ space: 10 }) {
@@ -1277,7 +1277,7 @@ focusControl.requestFocus('rootCommentInput');
         } else {
           Column() {
             Text(comment.author.name.slice(0, 1))
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.action_text'))
           }
@@ -1304,7 +1304,7 @@ focusControl.requestFocus('rootCommentInput');
 
             if (comment.authorTag.length > 0) {
               Text(comment.authorTag)
-                .fontSize(11)
+                .fontSize(this.fontCaption)
                 .fontColor($r('app.color.action_text'))
                 .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                 .backgroundColor($r('app.color.action_background'))
@@ -1313,7 +1313,7 @@ focusControl.requestFocus('rootCommentInput');
 
             if (comment.replyToAuthor !== undefined) {
               Text(`回复 ${comment.replyToAuthor.name}`)
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .fontColor($r('app.color.text_secondary'))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1377,14 +1377,14 @@ focusControl.requestFocus('rootCommentInput');
       Row({ space: 8 }) {
         Row({ space: 8 }) {
           Text(formatUnixTime(comment.createdTime))
-            .fontSize(11)
+            .fontSize(this.fontCaption)
             .fontColor($r('app.color.text_secondary'))
             .maxLines(1)
 
           if (comment.ipInfo.length > 0) {
             Text(comment.ipInfo)
               .layoutWeight(1)
-              .fontSize(11)
+              .fontSize(this.fontCaption)
               .fontColor($r('app.color.text_secondary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1395,18 +1395,13 @@ focusControl.requestFocus('rootCommentInput');
 
         Row({ space: 12 }) {
           Row({ space: 4 }) {
-            Image($r('app.media.ic_comment'))
-              .width(16)
-              .height(16)
-              .renderMode(ImageRenderMode.Template)
-              .fillColor($r('app.color.action_pill_icon'))
-              .draggable(false)
-              .syncLoad(true)
-              .interpolation(ImageInterpolation.Low)
+            SymbolGlyph($r('sys.symbol.message'))
+              .fontSize(this.fontBody)
+              .fontColor([$r('app.color.action_pill_icon')])
 
             if (!fromChildSheet && comment.childCommentCount > 0) {
               Text(`${comment.childCommentCount}`)
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .fontColor($r('app.color.text_secondary'))
             }
           }
@@ -1422,17 +1417,12 @@ focusControl.requestFocus('rootCommentInput');
           .alignItems(VerticalAlign.Center)
 
           Row({ space: 4 }) {
-            Image($r('app.media.ic_agree'))
-              .width(16)
-              .height(16)
-              .renderMode(ImageRenderMode.Template)
-              .fillColor(comment.liked ? $r('app.color.action_text') : $r('app.color.action_pill_icon'))
-              .draggable(false)
-              .syncLoad(true)
-              .interpolation(ImageInterpolation.Low)
+            SymbolGlyph($r('sys.symbol.hand_thumbsup_fill'))
+              .fontSize(this.fontBody)
+              .fontColor([comment.liked ? $r('app.color.action_text') : $r('app.color.action_pill_icon')])
 
             Text(`${comment.likeCount}`)
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontColor(comment.liked ? $r('app.color.action_text') : $r('app.color.text_secondary'))
           }
           .padding({ left: 4, right: 4, top: 4, bottom: 4 })
@@ -1470,13 +1460,13 @@ focusControl.requestFocus('rootCommentInput');
         Row() {
           Row({ space: 6 }) {
             Text(`查看 ${comment.childCommentCount} 条子评论`)
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
           }
           .padding({ left: 14, right: 14, top: 8, bottom: 8 })
           .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-          .borderRadius(16)
+          .borderRadius(this.cardRadius)
           .border({ width: 1, color: $r('app.color.card_border') })
           .onClick(() => {
             this.openChildComments(comment);
@@ -1521,116 +1511,89 @@ focusControl.requestFocus('rootCommentInput');
   ): void {
     if (this.sessionSnapshot.loggedIn) {
       Column({ space: 0 }) {
-        if (this.resolveReplyTo(isChild) !== undefined) {
-          Row({ space: 8 }) {
-            Text(`回复 ${this.resolveReplyTo(isChild)?.author.name ?? ''}`)
-              .fontSize(12)
-              .fontWeight(FontWeight.Medium)
-              .fontColor($r('app.color.action_text'))
-              .layoutWeight(1)
-
-            Text('取消')
-              .fontSize(12)
-              .fontColor($r('app.color.text_secondary'))
-              .onClick(() => {
-                onClearReply();
-              })
-          }
-          .width('100%')
-          .padding({ left: 12, right: 12, top: 9, bottom: 9 })
-          .backgroundColor($r('app.color.action_background'))
-          .borderRadius(14)
-        }
-
-        Row({ space: 10 }) {
-          if (this.liveEmojiPanelOpen(isChild)) {
-            Image($r('app.media.ic_keyboard'))
-              .width(26)
-              .height(26)
-              .fillColor($r('app.color.text_secondary'))
-              .renderMode(ImageRenderMode.Template)
-              .onClick(() => {
-                onToggleEmoji();
-              })
-          } else {
-            Image($r('app.media.ic_emoji'))
-              .width(26)
-              .height(26)
-              .fillColor($r('app.color.text_secondary'))
-              .renderMode(ImageRenderMode.Template)
-              .onClick(() => {
-                onToggleEmoji();
-              })
-          }
-
+        // 畅联风格：长条圆角悬浮胶囊（输入区 + 表情/键盘切换 + 纸飞机发送，均在栏内）
+        // 鸿蒙7(API26) 沉浸光感预留：把外层容器改为
+        //   .backgroundColor(Color.Transparent).backgroundBlurStyle(BlurStyle.Thin)
+        // 并令 useImmersive 返回 true 即可，布局无需改动。
+        Row({ space: 8 }) {
           TextArea({
             controller: inputController,
             text: this.liveCommentDraft(isChild),
             placeholder: this.resolveReplyTo(isChild) !== undefined ? `回复 ${this.resolveReplyTo(isChild)?.author.name ?? ''}...` : '写下你的评论...'
           })
-            .layoutWeight(1)
-            .maxLines(5)
-            .enterKeyType(EnterKeyType.NEW_LINE)
-            .constraintSize({ minHeight: 44 })
-            .id(isChild ? 'childCommentInput' : 'rootCommentInput')
-            .focusable(true)
-            .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-            .fontColor($r('app.color.text_primary'))
-            .placeholderColor($r('app.color.text_tertiary'))
-            .borderRadius(22)
-            .border({ width: 1, color: $r('app.color.card_border') })
-          .padding({ left: 14, right: 14 })
-          .onChange((value: string) => {
-            onDraftChange(value);
-          })
-          .onTextSelectionChange((_start: number, end: number) => {
-            if (isChild) {
-              this.childCaret = end;
-            } else {
-              this.rootCaret = end;
-            }
-          })
-          .onFocus(() => {
-            if (isChild) {
-              this.showChildEmojiPanel = false;
-            } else {
-              this.showRootEmojiPanel = false;
-            }
-          })
+          .layoutWeight(1)
+          .maxLines(4)
+          .enterKeyType(EnterKeyType.NEW_LINE)
+          .constraintSize({ minHeight: 38 })
+          .id(isChild ? 'childCommentInput' : 'rootCommentInput')
+          .focusable(true)
+          .backgroundColor(Color.Transparent)
+          .fontSize(this.fontBody)
+          .fontColor($r('app.color.text_primary'))
+          .placeholderColor($r('app.color.text_tertiary'))
+          .padding({ left: 6, right: 6 })
+            .onChange((value: string) => {
+              onDraftChange(value);
+            })
+            .onTextSelectionChange((_start: number, end: number) => {
+              if (isChild) {
+                this.childCaret = end;
+              } else {
+                this.rootCaret = end;
+              }
+            })
+            .onFocus(() => {
+              if (isChild) {
+                this.showChildEmojiPanel = false;
+              } else {
+                this.showRootEmojiPanel = false;
+              }
+            })
 
-          Text(this.liveCommentSubmitting(isChild) ? '发送中' : '发送')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-          .fontColor(
-            this.liveCommentSubmitting(isChild) || this.liveCommentDraft(isChild).trim().length === 0
-              ? $r('app.color.text_tertiary')
-              : $r('app.color.action_text')
-          )
-          .padding({ left: 16, right: 16, top: 11, bottom: 11 })
-          .backgroundColor(
-            this.liveCommentDraft(isChild).trim().length === 0
-              ? ThemeColors.cardBackground(this.oledBlack, this.isDark)
-              : $r('app.color.action_background')
-          )
-          .borderRadius(20)
-          .border({ width: 1, color: $r('app.color.card_border') })
-          .enabled(!this.liveCommentSubmitting(isChild) && this.liveCommentDraft(isChild).trim().length > 0)
+          if (this.liveEmojiPanelOpen(isChild)) {
+          SymbolGlyph($r('sys.symbol.keyboard'))
+            .fontSize(this.fontHeading)
+            .fontColor([$r('app.color.text_secondary')])
+            .onClick(() => {
+              onToggleEmoji();
+            })
+          } else {
+          SymbolGlyph($r('sys.symbol.face_smiling'))
+            .fontSize(this.fontHeading)
+            .fontColor([$r('app.color.text_secondary')])
+            .onClick(() => {
+              onToggleEmoji();
+            })
+          }
+
+          SymbolGlyph($r('sys.symbol.paperplane'))
+            .fontSize(this.fontHeading)
+            .fontColor([
+              this.liveCommentSubmitting(isChild) || this.liveCommentDraft(isChild).trim().length === 0
+                ? $r('app.color.text_tertiary')
+                : $r('app.color.action_text')
+            ])
+            .enabled(!this.liveCommentSubmitting(isChild) && this.liveCommentDraft(isChild).trim().length > 0)
             .onClick(() => {
               onSubmit();
             })
         }
         .width('100%')
-        .margin({ top: this.resolveReplyTo(isChild) !== undefined ? 10 : 0 })
+        .padding({ left: 14, right: 10, top: 5, bottom: 5 })
+        .backgroundColor(ThemeColors.floatBarBackground(this.oledBlack, this.isDark))
+        .backgroundBlurStyle(BlurStyle.Thin)
+        .border({
+          width: 1,
+          color: this.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)',
+          radius: this.cardRadius * 2
+        })
+        .shadow(this.isDark
+          ? { radius: 10, color: 'rgba(0,0,0,0.45)', offsetX: 0, offsetY: -2 }
+          : { radius: 8, color: 'rgba(0,0,0,0.08)', offsetX: 0, offsetY: -1 })
       }
       .width('100%')
-      .padding({ left: 16, right: 16, top: 10, bottom: this.liveEmojiPanelOpen(isChild) ? 10 : this.bottomSafeAreaVp + 10 })
-      .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-      .border({
-        width: {
-          top: 1
-        },
-        color: $r('app.color.card_border')
-      })
+      .padding({ left: 14, right: 14, top: 8, bottom: this.bottomSafeAreaVp + 8 })
+      .backgroundColor(Color.Transparent)
     }
   }
 
@@ -1639,11 +1602,11 @@ focusControl.requestFocus('rootCommentInput');
     Column() {
       Column({ space: 6 }) {
         Text('回复')
-          .fontSize(20)
+          .fontSize(this.fontHeading)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
         Text(`${this.activeChildComment?.childCommentCount ?? this.childComments.length} 条回复`)
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
       }
       .width('100%')
@@ -1655,7 +1618,7 @@ focusControl.requestFocus('rootCommentInput');
           if (this.activeChildComment !== undefined) {
             Column({ space: 12 }) {
               Text('原评论')
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_secondary'))
 
@@ -1664,7 +1627,7 @@ focusControl.requestFocus('rootCommentInput');
             .width('100%')
             .padding({ left: 14, right: 14, top: 14, bottom: 14 })
             .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-            .borderRadius(18)
+            .borderRadius(this.pillRadius)
             .border({ width: 1, color: $r('app.color.card_border') })
           }
 
@@ -1738,12 +1701,12 @@ focusControl.requestFocus('childCommentInput');
   @Builder
   private SortChip(label: string, selected: boolean, onClick: () => void): void {
     Text(label)
-      .fontSize(12)
+      .fontSize(this.fontCaption)
       .fontWeight(selected ? FontWeight.Medium : FontWeight.Regular)
       .fontColor(selected ? $r('app.color.action_text') : $r('app.color.text_secondary'))
       .padding({ left: 14, right: 14, top: 7, bottom: 7 })
       .backgroundColor(selected ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
-      .borderRadius(16)
+      .borderRadius(this.cardRadius)
       .border({ width: 1, color: selected ? $r('app.color.action_background') : $r('app.color.card_border') })
       .onClick(() => {
         onClick();
@@ -1754,7 +1717,7 @@ focusControl.requestFocus('childCommentInput');
   private CommentSheetStatus(message: string, error: boolean = false): void {
     Column({ space: 8 }) {
       Text(message)
-        .fontSize(14)
+        .fontSize(this.fontSecondary)
         .textAlign(TextAlign.Center)
         .fontColor(error ? $r('app.color.error_text') : $r('app.color.text_secondary'))
     }
@@ -1779,7 +1742,7 @@ focusControl.requestFocus('childCommentInput');
               .objectFit(ImageFit.Contain)
           } else {
             Text(item.fallback ?? '')
-              .fontSize(28)
+              .fontSize(this.fontSymbol)
               .textAlign(TextAlign.Center)
               .width('100%')
               .height('100%')
@@ -1830,13 +1793,13 @@ focusControl.requestFocus('childCommentInput');
   private CommentListLoadMore(label: string, enabled: boolean, onClick: () => void): void {
     Row() {
       Text(label)
-        .fontSize(12)
+        .fontSize(this.fontCaption)
         .fontWeight(FontWeight.Medium)
         .fontColor(enabled ? $r('app.color.action_text') : $r('app.color.text_tertiary'))
     }
     .padding({ left: 14, right: 14, top: 8, bottom: 8 })
     .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-    .borderRadius(16)
+    .borderRadius(this.cardRadius)
     .border({ width: 1, color: $r('app.color.card_border') })
     .enabled(enabled)
     .onClick(() => {
@@ -1851,7 +1814,7 @@ focusControl.requestFocus('childCommentInput');
   private ExportSheet(): void {
     Column() {
       Text('导出想法')
-        .fontSize(18)
+        .fontSize(this.fontSubhead)
         .fontWeight(FontWeight.Bold)
         .fontColor($r('app.color.text_primary'))
         .width('100%')
@@ -1872,12 +1835,12 @@ focusControl.requestFocus('childCommentInput');
           // 带评论导出
           Column() {
             Text('带评论导出')
-              .fontSize(16)
+              .fontSize(this.fontBody)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.text_primary'))
               .width('100%')
             Text(`包含评论数量：${this.exportCommentCount} 条（0 = 关闭）`)
-              .fontSize(13)
+              .fontSize(this.fontMeta)
               .fontColor($r('app.color.text_secondary'))
               .margin({ top: 8, bottom: 4 })
               .width('100%')
@@ -1909,7 +1872,7 @@ focusControl.requestFocus('childCommentInput');
               })
               .margin({ right: 10 })
             Text('在导出底部加入知乎++开源项目说明')
-              .fontSize(14)
+              .fontSize(this.fontSecondary)
               .fontColor($r('app.color.text_primary'))
               .layoutWeight(1)
           }
@@ -1940,10 +1903,10 @@ focusControl.requestFocus('childCommentInput');
     Row() {
       Column() {
         Text(title)
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontColor(disabled ? $r('app.color.text_secondary') : $r('app.color.text_primary'))
         Text(desc)
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
           .margin({ top: 2 })
       }
@@ -1951,7 +1914,7 @@ focusControl.requestFocus('childCommentInput');
       .alignItems(HorizontalAlign.Start)
       if (!disabled) {
         Text('›')
-          .fontSize(22)
+          .fontSize(this.fontSymbol)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_secondary'))
       }
@@ -1966,7 +1929,9 @@ focusControl.requestFocus('childCommentInput');
   }
 
   build() {
-    Stack({ alignContent: Alignment.BottomStart }) {
+    HdsTabs({ controller: this.pinTabsController }) {
+      TabContent() {
+        Stack({ alignContent: Alignment.BottomStart }) {
       // 主内容：WebView 自己滚动（fillHeight:true），占满全屏；作者卡片已注入 HTML 与之连成一块
       Column() {
         if (this.loading && this.pin === null) {
@@ -1984,18 +1949,30 @@ focusControl.requestFocus('childCommentInput');
 
       // 顶栏浮层（沉浸模式隐藏；滚动时 translate 显隐）
       if (!this.immersiveMode) {
-        Column() {
-          this.TopBar();
-        }
-        .width('100%')
+        ContentTopBar({
+          title: this.pin !== null && this.pin.author.name.length > 0 ? `${this.pin.author.name}的想法` : '想法',
+          contentProgress: 1,
+          offsetY: this.topBarOffsetY,
+          menuItems: [
+            { value: '在知乎中打开', action: () => this.openInZhihuApp() },
+            { value: '复制链接', action: () => this.copyCurrentLink() },
+            { value: '分享', action: () => this.systemShare() },
+            { value: '进入沉浸', action: () => this.enterImmersive() },
+            { value: this.ttsSpeaking ? '停止朗读' : '开始朗读', action: () => this.toggleTts() },
+            { value: '导出…', action: () => { this.showExportSheet = true; } }
+          ],
+          onBack: () => {
+            router.back({ url: '' });
+          },
+          onHeightChange: (h: number) => {
+            this.topBarHeight = h;
+          }
+        })
         .position({ x: 0, y: 0 })
         .zIndex(20)
       }
 
-      // 底栏浮层（沉浸模式隐藏；滚动时 translate 显隐）
-      if (!this.immersiveMode) {
-        this.FloatingBottomBar();
-      }
+      // 底栏由 HdsTabs barFloatingStyle 承载（真·HDS 沉浸光感材质，见 build 外层包裹）
 
       Column()
         .width(1)
@@ -2060,5 +2037,21 @@ focusControl.requestFocus('childCommentInput');
     }
     .width('100%')
     .height('100%')
+      }
+      .tabBar(this.PinBottomBar)
+    }
+    .barPosition(BarPosition.End)
+    .barOverlap(true)
+    .width('100%')
+    .height('100%')
+    .barFloatingStyle({
+      barWidth: { smallWidth: 360, mediumWidth: 360, largeWidth: 560 },
+      barSideMargin: 16,
+      barBottomMargin: 12,
+      systemMaterialEffect: {
+        materialType: ZhihuMaterial.resolveType(),
+        materialLevel: ZhihuMaterial.resolveLevel(this.materialLevel)
+      }
+    })
   }
 }
