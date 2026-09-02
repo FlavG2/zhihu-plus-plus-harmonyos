@@ -1,6 +1,53 @@
 import common from '@ohos.app.ability.common';
-import { FilterSettingsRepository, FILTER_KEYS } from '../services/FilterSettingsRepository';
+import { FilterSettingsRepository, FILTER_KEYS, FilterMode } from '../services/FilterSettingsRepository';
 import { AppearanceSettingsRepository } from '../services/AppearanceSettingsRepository';
+import { ThemeColors } from '../services/ThemeColors';
+
+// 过滤模式选择行：关闭 / 遮罩 / 隐藏 三段胶囊按钮。纯展示组件，
+// 由父页面负责读取初始 mode 与持久化（onChange 回调）。质量 / 智能共 4 节复用。
+@Component
+export struct ModeSelectRow {
+  @Prop title: string = '模式';
+  @Prop mode: FilterMode = 'off';
+  onChange: (mode: FilterMode) => void = () => {};
+  @StorageLink('oledBlack') oledBlack: boolean = false;
+  @StorageLink('isDark') isDark: boolean = false;
+  @StorageProp('fontSecondary') private fontSecondary: string = '14fp';
+  @StorageProp('fontMeta') private fontMeta: string = '13fp';
+  @StorageProp('fontCaption') private fontCaption: string = '12fp';
+
+  @Builder
+  modeButton(value: FilterMode, label: string) {
+    Button(label, { type: ButtonType.Capsule })
+      .layoutWeight(1)
+      .height(40)
+      .backgroundColor(this.mode === value ? $r('app.color.brand_blue') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
+      .fontColor(this.mode === value ? '#FFFFFF' : $r('app.color.text_primary'))
+      .fontSize(this.fontSecondary)
+      .onClick(() => {
+        this.onChange(value);
+      })
+  }
+
+  build() {
+    Column({ space: 4 }) {
+      Text(this.title)
+        .fontSize(this.fontSecondary)
+        .fontColor($r('app.color.text_primary'))
+        .width('100%')
+        .textAlign(TextAlign.Start)
+        .padding({ left: 16, right: 16, top: 14 })
+      Row({ space: 8 }) {
+        this.modeButton('off', '关闭')
+        this.modeButton('rules', '遮罩')
+        this.modeButton('hide', '隐藏')
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, bottom: 14 })
+    }
+    .width('100%')
+  }
+}
 
 // 数值设置行：标题（+描述）+ 右侧数字输入框，改动即持久化
 @Component
@@ -13,6 +60,9 @@ export struct NumberSettingRow {
   @Prop maxValue: number = 999999;
   @Prop showDivider: boolean = false;
   @State input: string = '';
+  @StorageProp('fontSecondary') private fontSecondary: string = '14fp';
+  @StorageProp('fontCaption') private fontCaption: string = '12fp';
+  @StorageProp('fontMeta') private fontMeta: string = '13fp';
   private ctx!: common.Context;
 
   aboutToAppear(): void {
@@ -25,11 +75,11 @@ export struct NumberSettingRow {
       Row({ space: 8 }) {
         Column({ space: 4 }) {
           Text(this.title)
-            .fontSize(14)
+            .fontSize(this.fontSecondary)
             .fontColor($r('app.color.text_primary'))
           if (this.desc.length > 0) {
             Text(this.desc)
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontColor($r('app.color.text_secondary'))
           }
         }
@@ -79,6 +129,9 @@ export struct BoolSettingRow {
   @Prop defValue: boolean = true;
   @Prop showDivider: boolean = false;
   @State on: boolean = true;
+  @StorageProp('fontSecondary') private fontSecondary: string = '14fp';
+  @StorageProp('fontCaption') private fontCaption: string = '12fp';
+  @StorageProp('fontMeta') private fontMeta: string = '13fp';
   private ctx!: common.Context;
 
   aboutToAppear(): void {
@@ -91,11 +144,11 @@ export struct BoolSettingRow {
       Row({ space: 8 }) {
         Column({ space: 4 }) {
           Text(this.title)
-            .fontSize(14)
+            .fontSize(this.fontSecondary)
             .fontColor($r('app.color.text_primary'))
           if (this.desc.length > 0) {
             Text(this.desc)
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontColor($r('app.color.text_secondary'))
           }
         }
@@ -136,7 +189,12 @@ export struct SliderSettingRow {
   @Prop decimals: number = 0;
   @Prop suffix: string = '';
   @Prop showDivider: boolean = false;
+  onChange: (value: number) => void = () => {};
+  onReset: () => void = () => {};
   @State value: number = 100;
+  @StorageProp('fontSecondary') private fontSecondary: string = '14fp';
+  @StorageProp('fontCaption') private fontCaption: string = '12fp';
+  @StorageProp('fontMeta') private fontMeta: string = '13fp';
   private ctx!: common.Context;
 
   aboutToAppear(): void {
@@ -144,25 +202,40 @@ export struct SliderSettingRow {
     this.value = AppearanceSettingsRepository.getInt(this.ctx, this.prefKey, this.defValue);
   }
 
+  private handleReset(): void {
+    this.value = this.defValue;
+    AppearanceSettingsRepository.setInt(this.ctx, this.prefKey, this.defValue);
+    this.onReset?.();
+  }
+
   build() {
     Column({ space: 0 }) {
       Row({ space: 8 }) {
         Column({ space: 4 }) {
           Text(this.title)
-            .fontSize(14)
+            .fontSize(this.fontSecondary)
             .fontColor($r('app.color.text_primary'))
           if (this.desc.length > 0) {
             Text(this.desc)
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontColor($r('app.color.text_secondary'))
           }
         }
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
 
-        Text(this.formatValue())
-          .fontSize(13)
-          .fontColor($r('app.color.action_text'))
+        Row({ space: 12 }) {
+          Text(this.formatValue())
+            .fontSize(this.fontMeta)
+            .fontColor($r('app.color.action_text'))
+
+          Text('重置')
+            .fontSize(this.fontMeta)
+            .fontColor($r('app.color.action_text'))
+            .onClick(() => {
+              this.handleReset();
+            })
+        }
       }
       .width('100%')
       .padding({ left: 16, right: 16, top: 14, bottom: 6 })
@@ -182,6 +255,7 @@ export struct SliderSettingRow {
         .onChange((v: number) => {
           this.value = v;
           AppearanceSettingsRepository.setInt(this.ctx, this.prefKey, v);
+          this.onChange?.(v);
         })
 
       if (this.showDivider) {
@@ -196,5 +270,32 @@ export struct SliderSettingRow {
   private formatValue(): string {
     const real = this.value / this.divisor;
     return `${real.toFixed(this.decimals)}${this.suffix}`;
+  }
+}
+
+// 通用卡片容器：小灰标题 + 圆角白卡，作为各设置分组的外层
+@Component
+export struct SettingsCard {
+  title: string = '';
+  @BuilderParam content: () => void;
+  @StorageLink('oledBlack') oledBlack: boolean = false;
+  @StorageLink('isDark') isDark: boolean = false;
+  @StorageProp('fontMeta') fontMeta: string = '13fp';
+
+  build() {
+    Column({ space: 0 }) {
+      Text(this.title)
+        .fontSize(this.fontMeta)
+        .fontColor($r('app.color.text_secondary'))
+        .padding({ left: 16, top: 12, bottom: 6 })
+      Column({ space: 0 }) {
+        this.content();
+      }
+      .width('100%')
+      .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+      .border({ width: 1, color: $r('app.color.card_border') })
+      .borderRadius(20)
+    }
+    .width('100%')
   }
 }

@@ -36,10 +36,10 @@ const MOBILE_NOTIFICATION_MESSAGE_URL = 'https://api.zhihu.com/notifications/v3/
 
 // 对齐安卓 MobileNotificationCategory：评论转发@ / 赞同喜欢 / 收藏了我 / 关注订阅
 export const NOTIFICATION_CATEGORIES: ZhihuNotificationCategory[] = [
-  { key: 'comment', title: '评论转发@', icon: $r('app.media.ic_comment') },
-  { key: 'like', title: '赞同喜欢', icon: $r('app.media.ic_agree') },
-  { key: 'favlist_me', title: '收藏了我', icon: $r('app.media.ic_bookmark') },
-  { key: 'follow', title: '关注订阅', icon: $r('app.media.nav_follow') }
+  { key: 'comment', title: '评论转发@', icon: $r('sys.symbol.message_fill') },
+  { key: 'like', title: '赞同喜欢', icon: $r('sys.symbol.hand_thumbsup_fill') },
+  { key: 'favlist_me', title: '收藏了我', icon: $r('sys.symbol.bookmark_fill') },
+  { key: 'follow', title: '关注订阅', icon: $r('sys.symbol.person_2_fill') }
 ];
 
 // 安卓 detailTitle -> category key 映射，用于未读数概览

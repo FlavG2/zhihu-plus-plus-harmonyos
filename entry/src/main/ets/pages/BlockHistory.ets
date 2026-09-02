@@ -2,13 +2,17 @@ import { router } from '@kit.ArkUI';
 import common from '@ohos.app.ability.common';
 import { BlockHistoryRepository, BlockedFeedRecord } from '../services/BlockHistoryRepository';
 import { ThemeColors } from '../services/ThemeColors';
+import { PageHeader } from '../components/PageHeader';
 
 @Entry
 @Component
 struct BlockHistoryPage {
   @State records: BlockedFeedRecord[] = [];
+  @State topBarHeight: number = 0;
   @StorageLink('oledBlack') oledBlack: boolean = false;
   @StorageLink('isDark') isDark: boolean = false;
+  @StorageProp('fontBodySm') fontBodySm: string = '15fp';
+  @StorageProp('fontCaption') fontCaption: string = '12fp';
 
   private context(): common.Context {
     return getContext(this) as common.Context;
@@ -18,23 +22,6 @@ struct BlockHistoryPage {
     this.records = BlockHistoryRepository.getRecords(this.context());
   }
 
-  @Builder
-  Header(title: string) {
-    Row() {
-      Text('‹')
-        .fontSize(28)
-        .fontColor($r('app.color.text_primary'))
-        .onClick(() => router.back({ url: '' }))
-        .padding({ left: 16, right: 8 })
-      Text(title)
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
-    }
-    .width('100%')
-    .height(56)
-    .alignItems(VerticalAlign.Center)
-  }
 
   private formatTime(time: number): string {
     const d = new Date(time);
@@ -43,16 +30,23 @@ struct BlockHistoryPage {
   }
 
   build() {
-    Column() {
-      this.Header('屏蔽记录')
+    Stack({ alignContent: Alignment.Top }) {
+      PageHeader({ title: '屏蔽记录' })
+        .zIndex(2)
+        .onAreaChange((_old: Area, newValue: Area) => {
+          if (newValue.height > 0) {
+            this.topBarHeight = Number(newValue.height);
+          }
+        })
       if (this.records.length === 0) {
         Column() {
           Text('暂无屏蔽记录')
-            .fontSize(15)
+            .fontSize(this.fontBodySm)
             .fontColor($r('app.color.text_secondary'))
         }
         .width('100%')
-        .layoutWeight(1)
+        .height('100%')
+        .padding({ top: this.topBarHeight })
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
       } else {
@@ -62,20 +56,20 @@ struct BlockHistoryPage {
               Column({ space: 6 }) {
                 Row() {
                   Text(rec.title)
-                    .fontSize(15)
+                    .fontSize(this.fontBodySm)
                     .fontColor($r('app.color.text_primary'))
                     .layoutWeight(1)
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
                   Text(rec.reason)
-                    .fontSize(12)
+                    .fontSize(this.fontCaption)
                     .fontColor($r('app.color.action_text'))
                     .padding({ left: 8 })
                 }
                 .width('100%')
                 .alignItems(VerticalAlign.Center)
                 Text(this.formatTime(rec.time))
-                  .fontSize(12)
+                  .fontSize(this.fontCaption)
                   .fontColor($r('app.color.text_tertiary'))
                   .width('100%')
               }
@@ -88,12 +82,14 @@ struct BlockHistoryPage {
           }
           .padding({ left: 16, right: 16, top: 8, bottom: 32 })
         }
-        .layoutWeight(1)
         .width('100%')
+        .height('100%')
+        .padding({ top: this.topBarHeight })
       }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }
 }

@@ -5,6 +5,8 @@ import { ZhihuNotification } from '../models/ZhihuNotificationModels';
 import { resolveZhihuContent, resolveNotificationEntryUrl } from '../services/ZhihuContentResolver';
 import { serializeZhihuContentTarget, ZhihuCommentableTarget } from '../models/ZhihuContentModels';
 import { ThemeColors } from '../services/ThemeColors';
+import { FilterSettingsRepository } from '../services/FilterSettingsRepository';
+import { PageHeader } from '../components/PageHeader';
 
 interface NotificationTimelineParams {
   readonly entryName?: string;
@@ -14,6 +16,18 @@ interface NotificationTimelineParams {
 @Entry
 @Component
 struct NotificationTimelinePage {
+  // 软尺寸：由 DesignMetrics 按「官方基线 × 用户倍率」算出后写入 AppStorage，
+  // 默认值与迁移前完全一致，故视觉零变化；用户调整字号/密度后本页自动重排。
+  @StorageProp('fontSymbol') private fontSymbol: string = '24fp';
+  @StorageProp('fontCaption') private fontCaption: string = '12fp';
+  @StorageProp('fontMeta') private fontMeta: string = '13fp';
+  @StorageProp('fontSecondary') private fontSecondary: string = '14fp';
+  @StorageProp('fontBody') private fontBody: string = '16fp';
+  @StorageProp('fontSubhead') private fontSubhead: string = '18fp';
+  @StorageProp('cardRadius') private cardRadius: number = 16;
+  @StorageProp('spaceMd') private spaceMd: number = 12;
+  @StorageProp('cardPadding') private cardPadding: number = 16;
+
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
   @StorageLink('oledBlack') private oledBlack: boolean = false;
   @StorageLink('isDark') private isDark: boolean = false;
@@ -26,6 +40,7 @@ struct NotificationTimelinePage {
   @State private loading: boolean = false;
   @State private error: string = '';
   @State private markingRead: boolean = false;
+  @State private topBarHeight: number = 0;
 
   private context(): common.Context {
     return getContext(this) as common.Context;
@@ -42,6 +57,13 @@ struct NotificationTimelinePage {
     this.loadTimeline(true);
   }
 
+  onPageShow(): void {
+    // 从消息详情/文章页返回时重新拉取列表，让已读状态及时刷新
+    if (!this.loading) {
+      this.loadTimeline(true);
+    }
+  }
+
   private async loadTimeline(reset: boolean): Promise<void> {
     if (this.loading) {
       return;
@@ -54,13 +76,44 @@ struct NotificationTimelinePage {
         this.entryName,
         reset ? undefined : this.nextUrl
       );
+      // 对齐安卓：通知时间线直接用服务端返回顺序（不在客户端重排）
+      const sorted = page.items.slice();
       if (reset) {
-        this.items = page.items;
+        this.items = sorted;
       } else {
-        this.items = this.items.concat(page.items);
+        this.items = this.items.concat(sorted);
       }
       this.nextUrl = page.nextUrl;
       this.isEnd = page.isEnd;
+      // 对齐安卓 NotificationTimelineViewModel：进入分类且已开启「自动标记已读」时，
+      // 调对应 entry 的 actions/readall，把该分类标记为已读（仅在首次进入时触发）
+      if (reset && FilterSettingsRepository.getBool(this.context(), 'notif_auto_read', false)) {
+        try {
+          await NotificationService.markAllRead(this.context(), this.entryName);
+          this.items = this.items.map<ZhihuNotification>((it) => ({
+            id: it.id,
+            isRead: true,
+            createdTime: it.createdTime,
+            avatarUrl: it.avatarUrl,
+            title: it.title,
+            subtitle: it.subtitle,
+            body: it.body,
+            sourceText: it.sourceText,
+            sourceLink: it.sourceLink,
+            targetLink: it.targetLink,
+            contentTargetLink: it.contentTargetLink,
+            subTargetLink: it.subTargetLink,
+            targetSourceTargetLink: it.targetSourceTargetLink,
+            headTargetLink: it.headTargetLink,
+            anchorTargetLink: it.anchorTargetLink,
+            targetType: it.targetType,
+            targetId: it.targetId,
+            unreadCount: 0
+          }));
+        } catch (e) {
+          // 静默失败，保持 UI 稳定
+        }
+      }
     } catch (e) {
       this.error = e instanceof Error ? e.message : '加载失败';
     } finally {
@@ -259,55 +312,51 @@ struct NotificationTimelinePage {
   }
 
   build() {
-    Column() {
-      // ---- 顶栏 ----
-      Row() {
-        Text('‹')
-          .fontSize(26)
-          .fontColor($r('app.color.text_primary'))
-          .onClick(() => {
-            router.back({ url: '' });
-          })
-          .padding({ left: 8, right: 4 })
-
-        Text(this.title)
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-
-        if (this.items.some((it) => !it.isRead)) {
-          Text(this.markingRead ? '已读中...' : '全部已读')
-            .fontSize(14)
-            .fontColor($r('app.color.action_text'))
-            .onClick(() => this.markAllRead())
-            .padding({ left: 8, right: 8 })
+    Stack({ alignContent: Alignment.Top }) {
+      // ---- 浮层顶栏：PageHeader（自带返回键 + 玻璃模糊背景）----
+      PageHeader({
+        title: this.title,
+        rightButtons: this.items.some((it) => !it.isRead)
+          ? [
+              {
+                icon: $r('sys.symbol.checkmark_circle'),
+                action: () => {
+                  this.markAllRead();
+                }
+              }
+            ]
+          : []
+      })
+      .zIndex(2)
+      .onAreaChange((_old: Area, newValue: Area) => {
+        if (newValue.height > 0 && Number(newValue.height) !== this.topBarHeight) {
+          this.topBarHeight = Number(newValue.height);
         }
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-      .padding({ left: 8, right: 8, top: this.topSafeAreaVp + 12, bottom: 12 })
-
-      Divider()
-        .color($r('app.color.card_border'))
-        .width('100%')
+      })
 
       // ---- 列表 ----
       if (this.error.length > 0) {
         Column() {
           Text(this.error)
-            .fontSize(14)
+            .fontSize(this.fontSecondary)
             .fontColor($r('app.color.text_secondary'))
           Button('重试')
             .margin({ top: 12 })
             .onClick(() => this.loadTimeline(true))
         }
         .width('100%')
-        .layoutWeight(1)
+        .height('100%')
         .justifyContent(FlexAlign.Center)
         .alignItems(HorizontalAlign.Center)
       } else {
         List() {
+          // 顶部让位占位：滚动时内容钻到顶栏底下，模糊生效
+          ListItem() {
+            Column()
+              .width('100%')
+              .height(this.topBarHeight)
+          }
+
           ForEach(this.items, (item: ZhihuNotification) => {
             ListItem() {
               if (this.entryName === 'invite') {
@@ -329,23 +378,25 @@ struct NotificationTimelinePage {
             ListItem() {
               Row() {
                 Text('加载中...')
-                  .fontSize(13)
+                  .fontSize(this.fontMeta)
                   .fontColor($r('app.color.text_secondary'))
               }
               .width('100%')
               .justifyContent(FlexAlign.Center)
-              .padding(16)
+              .padding(this.cardPadding)
             }
           }
         }
         .width('100%')
-        .layoutWeight(1)
+        .height('100%')
+        .edgeEffect(EdgeEffect.Spring)
         .onReachEnd(() => this.loadMore())
       }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }
 
   // 分类详情项（对齐安卓 NotificationItemView）：左红点 + 头像 + 名字 + 动作 + 时间 + 来源卡片
@@ -376,7 +427,7 @@ struct NotificationTimelinePage {
         Column() {
           Row() {
             Text(item.title)
-              .fontSize(16)
+              .fontSize(this.fontBody)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
               .maxLines(2)
@@ -384,7 +435,7 @@ struct NotificationTimelinePage {
               .layoutWeight(1)
 
             Text(this.formatTime(item.createdTime))
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontColor($r('app.color.text_tertiary'))
               .margin({ left: 8 })
           }
@@ -393,7 +444,7 @@ struct NotificationTimelinePage {
 
           if (item.subtitle.length > 0) {
             Text(item.subtitle)
-              .fontSize(13)
+              .fontSize(this.fontMeta)
               .fontColor($r('app.color.text_secondary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -403,7 +454,7 @@ struct NotificationTimelinePage {
 
           if (item.body.length > 0) {
             Text(item.body)
-              .fontSize(13)
+              .fontSize(this.fontMeta)
               .fontColor($r('app.color.text_secondary'))
               .maxLines(3)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -421,7 +472,7 @@ struct NotificationTimelinePage {
       if (item.sourceText.length > 0) {
         Column() {
           Text(item.sourceText)
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor($r('app.color.text_primary'))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -429,13 +480,13 @@ struct NotificationTimelinePage {
 
           if (item.sourceLink.length > 0) {
             Text('查看内容')
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontColor($r('app.color.action_text'))
               .margin({ top: 6 })
           }
         }
         .width('100%')
-        .padding(12)
+        .padding(this.spaceMd)
         .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
         .borderRadius(8)
         .margin({ top: 10, left: 18, right: 16 })
@@ -461,7 +512,7 @@ struct NotificationTimelinePage {
 
         Column() {
           Text(item.title)
-            .fontSize(16)
+            .fontSize(this.fontBody)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
             .maxLines(1)
@@ -471,7 +522,7 @@ struct NotificationTimelinePage {
           Row() {
             if (item.subtitle.length > 0) {
               Text(item.subtitle)
-                .fontSize(13)
+                .fontSize(this.fontMeta)
                 .fontColor($r('app.color.text_secondary'))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -479,7 +530,7 @@ struct NotificationTimelinePage {
             }
 
             Text(this.formatTime(item.createdTime))
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontColor($r('app.color.text_tertiary'))
               .margin({ left: 8 })
           }
@@ -496,7 +547,7 @@ struct NotificationTimelinePage {
       if (item.sourceText.length > 0) {
         Column() {
           Text(item.sourceText)
-            .fontSize(16)
+            .fontSize(this.fontBody)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
             .maxLines(2)
@@ -505,11 +556,11 @@ struct NotificationTimelinePage {
 
           Row() {
             Text('写回答')
-              .fontSize(13)
+              .fontSize(this.fontMeta)
               .fontColor($r('app.color.action_text'))
               .padding({ left: 14, right: 14, top: 6, bottom: 6 })
               .backgroundColor($r('app.color.action_background'))
-              .borderRadius(16)
+              .borderRadius(this.cardRadius)
               .margin({ top: 10 })
           }
           .width('100%')

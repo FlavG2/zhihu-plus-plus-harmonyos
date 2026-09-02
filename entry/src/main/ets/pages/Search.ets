@@ -6,6 +6,7 @@ import { BrowsingHistoryRepository } from '../services/BrowsingHistoryRepository
 import { CloudHistoryService } from '../services/CloudHistoryService';
 import { HotSearchItem, SearchService } from '../services/SearchService';
 import { ThemeColors } from '../services/ThemeColors';
+import { ContentCard } from '../components/ContentCard';
 import { resolveZhihuContent } from '../services/ZhihuContentResolver';
 import { openZhihuContentTarget, openZhihuTopic } from '../services/ZhihuNavigation';
 import { pasteboard } from '@kit.BasicServicesKit';
@@ -23,6 +24,20 @@ interface SearchPageParams {
 @Entry
 @Component
 struct SearchPage {
+  @StorageProp('cardPadding') private cardPadding: number = 16;
+  @StorageProp('pillRadius') private pillRadius: number = 18;
+  @StorageProp('cardRadius') private cardRadius: number = 16;
+  @StorageProp('fontSubhead') private fontSubhead: string = '18fp';
+  @StorageProp('fontBody') private fontBody: string = '16fp';
+  @StorageProp('fontSecondary') private fontSecondary: string = '14fp';
+  @StorageProp('fontMeta') private fontMeta: string = '13fp';
+  @StorageProp('fontCaption') private fontCaption: string = '12fp';
+  @StorageProp('fontSymbol') private fontSymbol: string = '24fp';
+  @StorageProp('fontBodyLg') private fontBodyLg: string = '17fp';
+  @StorageProp('fontTitle') private fontTitle: string = '22fp';
+  @StorageProp('fontHeading') private fontHeading: string = '20fp';
+  @StorageProp('spaceMd') private spaceMd: number = 12;
+  @StorageProp('pagePadding') private pagePadding: number = 20;
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
   @StorageProp('bottomSafeAreaVp') private bottomSafeAreaVp: number = 0;
   @StorageProp('sessionSnapshot') private sessionSnapshot: SessionSnapshot = DEFAULT_SESSION_SNAPSHOT;
@@ -50,6 +65,7 @@ struct SearchPage {
   @StorageLink('showSearchHistory') private showSearchHistory: boolean = true;
   @StorageLink('showSearchHotSearch') private showSearchHotSearch: boolean = true;
   @State private historyMenuExpanded: boolean = false;
+  @State private historyExpanded: boolean = false;
   @State private refreshing: boolean = false;
   // 搜索分类 Tab（对齐安卓 SearchTab：全站 / 用户 / 话题）
   @State private searchTab: 'general' | 'people' | 'topic' = 'general';
@@ -66,7 +82,7 @@ struct SearchPage {
   @State private peopleError: string = '';
   @State private topicError: string = '';
 
-  aboutToAppear(): void {
+  async aboutToAppear(): Promise<void> {
     const rawParams = router.getParams();
     const emptyParams: SearchPageParams = {};
     const params: SearchPageParams = rawParams !== undefined && rawParams !== null
@@ -84,7 +100,7 @@ struct SearchPage {
     }
     if (scopeId.length === 0) {
       this.loadHotSearch();
-      this.loadSearchHistory();
+      await this.loadSearchHistory();
     }
   }
 
@@ -170,7 +186,7 @@ struct SearchPage {
     this.searchQuery = nextQuery;
     // 记录搜索历史（仅非成员搜索且开启历史开关时）
     if (this.scopeMemberHashId.length === 0 && this.showSearchHistory && this.searchTab === 'general') {
-      this.addSearchHistory(nextQuery);
+      await this.addSearchHistory(nextQuery);
     }
     this.hasSearched = true;
     if (this.searchTab === 'people') {
@@ -308,32 +324,35 @@ struct SearchPage {
   }
 
   // ===== 搜索历史（对照安卓 SEARCH_HISTORY_KEY / saveSearchHistory）=====
-  private loadSearchHistory(): void {
+  // 改用异步 preferences API，避免同步 API 在真机上偶发写入失败导致历史不记录。
+  private async loadSearchHistory(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(this.context(), { name: 'zhihu_appearance' });
-      const raw = store.getSync(SEARCH_HISTORY_KEY, '') as string;
+      const store = await preferences.getPreferences(this.context(), { name: 'zhihu_search_history' });
+      const raw = await store.get(SEARCH_HISTORY_KEY, '') as string;
       if (typeof raw === 'string' && raw.length > 0) {
         const parsed = JSON.parse(raw) as string[];
         if (Array.isArray(parsed)) {
           this.searchHistoryItems = parsed.filter((item: string) => typeof item === 'string');
         }
       }
-    } catch (_) {
+    } catch (e) {
+      console.error('[Search] loadSearchHistory failed:', e);
       this.searchHistoryItems = [];
     }
   }
 
-  private saveSearchHistory(): void {
+  private async saveSearchHistory(): Promise<void> {
     try {
-      const store = preferences.getPreferencesSync(this.context(), { name: 'zhihu_appearance' });
-      store.putSync(SEARCH_HISTORY_KEY, JSON.stringify(this.searchHistoryItems));
-      store.flushSync();
-    } catch (_) {
-      // 忽略持久化失败
+      const store = await preferences.getPreferences(this.context(), { name: 'zhihu_search_history' });
+      const payload = JSON.stringify(this.searchHistoryItems);
+      await store.put(SEARCH_HISTORY_KEY, payload);
+      await store.flush();
+    } catch (e) {
+      console.error('[Search] saveSearchHistory failed:', e);
     }
   }
 
-  private addSearchHistory(query: string): void {
+  private async addSearchHistory(query: string): Promise<void> {
     const trimmed = query.trim();
     if (trimmed.length === 0) {
       return;
@@ -344,7 +363,7 @@ struct SearchPage {
       items.pop();
     }
     this.searchHistoryItems = items;
-    this.saveSearchHistory();
+    await this.saveSearchHistory();
   }
 
   private clearSearchHistory(): void {
@@ -505,121 +524,142 @@ struct SearchPage {
   }
 
   @Builder
-  private SearchTopBar(): void {
-    Row({ space: 10 }) {
-      Image($r('app.media.arrow_back'))
-        .width(22)
-        .height(22)
-        .fillColor($r('app.color.text_primary'))
-        .renderMode(ImageRenderMode.Template)
-        .onClick(() => {
-          router.back({ url: '' });
+  private SearchTitleSlot(): void {
+    Row({ space: 8 }) {
+      SymbolGlyph($r('sys.symbol.magnifyingglass'))
+        .fontSize(this.fontBodyLg)
+        .fontColor([$r('app.color.text_secondary')])
+
+      TextInput({ text: this.queryInput, placeholder: this.scopeMemberHashId.length > 0 ? '搜索 TA 的创作' : '搜索内容' })
+        .layoutWeight(1)
+        .height(40)
+        .fontSize(this.fontBody)
+        .fontColor($r('app.color.text_primary'))
+        .placeholderColor($r('app.color.text_tertiary'))
+        .backgroundColor('#00000000')
+        .padding({ left: 0, right: 0 })
+        .enterKeyType(EnterKeyType.Search)
+        .onChange((value: string) => {
+          this.queryInput = value;
+        })
+        .onSubmit(() => {
+          this.submitSearch();
+        })
+        .onPaste((text: string) => {
+          this.handlePastedText(text);
         })
 
-      Row({ space: 8 }) {
-        Image($r('app.media.ic_search'))
-          .width(17)
-          .height(17)
-          .fillColor($r('app.color.text_secondary'))
-          .renderMode(ImageRenderMode.Template)
-
-        TextInput({ text: this.queryInput, placeholder: this.scopeMemberHashId.length > 0 ? '搜索 TA 的创作' : '搜索内容' })
-          .layoutWeight(1)
-          .height(40)
-          .fontSize(15)
-          .fontColor($r('app.color.text_primary'))
-          .placeholderColor($r('app.color.text_tertiary'))
-          .backgroundColor('#00000000')
-          .padding({ left: 0, right: 0 })
-          .enterKeyType(EnterKeyType.Search)
-          .onChange((value: string) => {
-            this.queryInput = value;
+      if (this.queryInput.length > 0) {
+        Text('×')
+          .fontSize(this.fontBody)
+          .fontColor($r('app.color.text_secondary'))
+          .width(20)
+          .height(20)
+          .textAlign(TextAlign.Center)
+          .backgroundColor($r('app.color.card_border'))
+          .borderRadius(10)
+          .onClick(() => {
+            this.clearSearch();
           })
-          .onSubmit(() => {
-            this.submitSearch();
+      } else {
+        SymbolGlyph($r('sys.symbol.doc'))
+          .fontSize(this.fontBodyLg)
+          .fontColor([$r('app.color.text_secondary')])
+          .onClick(() => {
+            this.pasteFromClipboard();
           })
-          .onPaste((text: string) => {
-            this.handlePastedText(text);
-          })
-
-        if (this.queryInput.length > 0) {
-          Text('×')
-            .fontSize(16)
-            .fontColor($r('app.color.text_secondary'))
-            .width(20)
-            .height(20)
-            .textAlign(TextAlign.Center)
-            .backgroundColor($r('app.color.card_border'))
-            .borderRadius(10)
-            .onClick(() => {
-              this.clearSearch();
-            })
-        } else {
-          Image($r('app.media.ic_clipboard'))
-            .width(17)
-            .height(17)
-            .fillColor($r('app.color.text_secondary'))
-            .renderMode(ImageRenderMode.Template)
-            .onClick(() => {
-              this.pasteFromClipboard();
-            })
-        }
       }
-      .layoutWeight(1)
-      .height(42)
-      .padding({ left: 14, right: 10 })
-      .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-      .border({ width: 1, color: $r('app.color.card_border') })
-      .borderRadius(22)
-
-      Text(this.hasSearched && this.searchTab === 'general' ? '筛选' : '搜索')
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontColor(
-          this.hasSearched && this.searchTab === 'general'
-            ? (this.showFilterBar ? $r('app.color.action_text') : $r('app.color.text_primary'))
-            : (this.queryInput.trim().length > 0 ? $r('app.color.action_text') : $r('app.color.text_tertiary'))
-        )
-        .padding({ left: 6, right: 6, top: 9, bottom: 9 })
-        .enabled(this.hasSearched && this.searchTab === 'general' ? true : this.queryInput.trim().length > 0)
-        .onClick(() => {
-          if (this.hasSearched && this.searchTab === 'general') {
-            this.showFilterBar = !this.showFilterBar;
-          } else {
-            this.submitSearch();
-          }
-        })
     }
-    .alignItems(VerticalAlign.Center)
+    .layoutWeight(1)
+    .height(42)
+    .padding({ left: 14, right: 10 })
+    .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+    .border({ width: 1, color: $r('app.color.card_border') })
+    .borderRadius(22)
+  }
+
+  @Builder
+  private SearchActions(): void {
+    Text(this.hasSearched && this.searchTab === 'general' ? '筛选' : '搜索')
+      .fontSize(this.fontSecondary)
+      .fontWeight(FontWeight.Medium)
+      .fontColor(
+        this.hasSearched && this.searchTab === 'general'
+          ? (this.showFilterBar ? $r('app.color.action_text') : $r('app.color.text_primary'))
+          : (this.queryInput.trim().length > 0 ? $r('app.color.action_text') : $r('app.color.text_tertiary'))
+      )
+      .padding({ left: 6, right: 6, top: 9, bottom: 9 })
+      .enabled(this.hasSearched && this.searchTab === 'general' ? true : this.queryInput.trim().length > 0)
+      .onClick(() => {
+        if (this.hasSearched && this.searchTab === 'general') {
+          this.showFilterBar = !this.showFilterBar;
+        } else {
+          this.submitSearch();
+        }
+      })
+  }
+
+  // 自绘顶栏：圆形返回键（与 PageHeader 同款光效）+ 搜索框（titleSlot）+ 搜索/筛选（actions）。
+  // 不通过 PageHeader 的 @BuilderParam 传参，避免跨组件 builder 的 this 绑定在运行时崩溃（此前点击首页搜索闪退的根因）。
+  @Builder
+  private SearchHeader(): void {
+    Row() {
+      Button() {
+        SymbolGlyph($r('sys.symbol.chevron_left'))
+          .fontSize(this.fontSymbol)
+          .fontColor([$r('app.color.text_primary')])
+      }
+      .type(ButtonType.Circle)
+      .backgroundColor(this.isDark ? '#1AFFFFFF' : '#0D000000')
+      .stateEffect(true)
+      .width(36)
+      .height(36)
+      .margin({ left: 8, right: 4 })
+      .onClick(() => {
+        router.back({ url: '' });
+      })
+
+      this.SearchTitleSlot();
+      this.SearchActions();
+    }
     .width('100%')
-    .padding({ left: 16, right: 16, top: this.topSafeAreaVp + 12, bottom: 12 })
-    .backgroundColor($r('app.color.glass_top_bar_background'))
-    .border({
-      width: {
-        bottom: 1
-      },
-      color: $r('app.color.glass_top_bar_border')
+    .alignItems(VerticalAlign.Center)
+    .padding({
+      top: this.topSafeAreaVp + this.spaceMd,
+      bottom: this.spaceMd,
+      right: this.pagePadding
     })
-    .backdropBlur(28)
+    .backgroundColor(ThemeColors.oledBlack(this.oledBlack, this.isDark, $r('app.color.glass_top_bar_background')))
+  }
+
+  // 搜索历史 / 热搜卡片底色：OLED 黑下纯黑 #000000，浅色下固定浅蓝（不受 lightCardWhite 影响）。
+  private suggestionCardBg(): ResourceColor {
+    if (this.oledBlack && this.isDark) {
+      return '#000000';
+    }
+    if (!this.isDark) {
+      return $r('app.color.answer_card_background');
+    }
+    return $r('app.color.card_background');
   }
 
   @Builder
   private HotSearchList(): void {
-    Column({ space: 10 }) {
+    Column() {
       Row() {
         Text('热搜')
-          .fontSize(18)
+          .fontSize(this.fontSubhead)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
 
         Text(this.hotSearchLoading ? '刷新中' : '刷新')
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontWeight(FontWeight.Medium)
           .fontColor(this.hotSearchLoading ? $r('app.color.text_tertiary') : $r('app.color.action_text'))
           .padding({ left: 12, right: 12, top: 7, bottom: 7 })
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(16)
+          .borderRadius(this.cardRadius)
           .enabled(!this.hotSearchLoading)
           .onClick(() => {
             this.loadHotSearch();
@@ -631,53 +671,60 @@ struct SearchPage {
 
       if (this.hotSearchError.length > 0) {
         Text(this.hotSearchError)
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontColor($r('app.color.error_text'))
           .padding({ left: 18, right: 18, top: 0, bottom: 8 })
       }
 
       if (this.hotSearchLoading && this.hotSearchItems.length === 0) {
         Text('正在加载知乎热搜...')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontColor($r('app.color.text_secondary'))
           .padding({ left: 18, right: 18, top: 20, bottom: 20 })
       } else if (this.hotSearchItems.length === 0) {
         Text('请输入搜索内容')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontColor($r('app.color.text_secondary'))
           .padding({ left: 18, right: 18, top: 20, bottom: 20 })
       } else {
         ForEach(this.hotSearchItems, (item: HotSearchItem, index: number) => {
-          Row({ space: 12 }) {
-            Text(`${index + 1}`)
-              .fontSize(14)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(index < 3 ? $r('app.color.error_text') : $r('app.color.text_tertiary'))
-              .width(28)
-              .textAlign(TextAlign.Center)
+          Column() {
+            Row({ space: 12 }) {
+              Text(`${index + 1}`)
+                .fontSize(this.fontSecondary)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(index < 3 ? $r('app.color.error_text') : $r('app.color.text_tertiary'))
+                .width(28)
+                .textAlign(TextAlign.Center)
 
-            Text(item.query)
-              .fontSize(15)
-              .fontColor($r('app.color.text_primary'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-
-            if (item.hotShow.length > 0) {
-              Text(item.hotShow)
-                .fontSize(12)
-                .fontColor($r('app.color.text_secondary'))
+              Text(item.query)
+                .fontSize(this.fontBody)
+                .fontColor($r('app.color.text_primary'))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .layoutWeight(1)
+
+              if (item.hotShow.length > 0) {
+                Text(item.hotShow)
+                  .fontSize(this.fontCaption)
+                  .fontColor($r('app.color.text_tertiary'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .flexShrink(0)
+              }
+            }
+            .width('100%')
+            .alignItems(VerticalAlign.Center)
+            .padding({ left: 18, right: 18, top: 12, bottom: 12 })
+
+            if (index < this.hotSearchItems.length - 1) {
+              Divider()
+                .strokeWidth(0.5)
+                .color($r('app.color.card_border'))
+                .padding({ left: 18, right: 18 })
             }
           }
           .width('100%')
-          .alignItems(VerticalAlign.Center)
-          .padding({ left: 18, right: 18, top: 12, bottom: 12 })
-          .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-          .border({ width: 1, color: $r('app.color.card_border') })
-          .borderRadius(12)
-          .margin({ left: 16, right: 16, bottom: 2 })
           .onClick(() => {
             this.submitSearch(item.query);
           })
@@ -685,29 +732,43 @@ struct SearchPage {
       }
     }
     .width('100%')
+    .backgroundColor(this.suggestionCardBg())
+    .border({ width: 1, color: $r('app.color.card_border') })
+    .borderRadius(this.cardRadius)
+    .margin({ left: 16, right: 16, bottom: 12 })
   }
 
   // 空查询时的建议区：搜索历史（可选）+ 热搜（可选），对齐安卓 SearchScreen 布局。
+  // 历史 / 热搜各自包成一个大卡片，与华为浏览器一致。
   @Builder
   private SearchSuggestions(): void {
     Column() {
       if ((this.showSearchHistory && this.searchHistoryItems.length > 0)
         || (this.showSearchHotSearch && this.hotSearchItems.length > 0)) {
-        Column() {
-          if (this.showSearchHistory && this.searchHistoryItems.length > 0) {
+        if (this.showSearchHistory && this.searchHistoryItems.length > 0) {
+          // 搜索历史：单个大卡片
+          Column() {
             Row() {
               Text('搜索历史')
-                .fontSize(18)
+                .fontSize(this.fontSubhead)
                 .fontWeight(FontWeight.Bold)
                 .fontColor($r('app.color.text_primary'))
                 .layoutWeight(1)
                 .alignSelf(ItemAlign.Center)
 
-              Image($r('app.media.ic_more_vert'))
-                .width(20)
-                .height(20)
-                .fillColor($r('app.color.text_secondary'))
-                .renderMode(ImageRenderMode.Template)
+              if (this.searchHistoryItems.length > 6) {
+                SymbolGlyph(this.historyExpanded ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
+                  .fontSize(this.fontTitle)
+                  .fontColor([$r('app.color.text_secondary')])
+                  .margin({ right: 12 })
+                  .onClick(() => {
+                    this.historyExpanded = !this.historyExpanded;
+                  })
+              }
+
+              SymbolGlyph($r('sys.symbol.ellipsis_circle'))
+                .fontSize(this.fontHeading)
+                .fontColor([$r('app.color.text_secondary')])
                 .onClick(() => {
                   this.historyMenuExpanded = !this.historyMenuExpanded;
                 })
@@ -732,44 +793,50 @@ struct SearchPage {
             .width('100%')
             .padding({ left: 18, right: 18, top: 16, bottom: 4 })
 
-            ForEach(this.searchHistoryItems, (query: string) => {
-              Row({ space: 12 }) {
-                Image($r('app.media.ic_search'))
-                  .width(18)
-                  .height(18)
-                  .fillColor($r('app.color.text_secondary'))
-                  .renderMode(ImageRenderMode.Template)
+            Flex({ wrap: FlexWrap.Wrap, alignItems: ItemAlign.Center }) {
+              ForEach(this.searchHistoryItems.slice(0, this.historyExpanded ? 18 : 6), (query: string) => {
+                Column() {
+                  Row({ space: 8 }) {
+                    SymbolGlyph($r('sys.symbol.magnifyingglass'))
+                      .fontSize(this.fontBody)
+                      .fontColor([$r('app.color.text_secondary')])
 
-                Text(query)
-                  .fontSize(15)
-                  .fontColor($r('app.color.text_primary'))
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .layoutWeight(1)
-              }
-              .width('100%')
-              .alignItems(VerticalAlign.Center)
-              .padding({ left: 18, right: 18, top: 12, bottom: 12 })
-              .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-              .border({ width: 1, color: $r('app.color.card_border') })
-              .borderRadius(12)
-              .margin({ left: 16, right: 16, bottom: 2 })
-              .onClick(() => {
-                this.submitSearch(query);
-              })
-            }, (query: string) => query)
+                    Text(query)
+                      .fontSize(this.fontBody)
+                      .fontColor($r('app.color.text_primary'))
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .layoutWeight(1)
+                  }
+                  .width('100%')
+                  .alignItems(VerticalAlign.Center)
+                  .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+                  .onClick(() => {
+                    this.submitSearch(query);
+                  })
+                }
+                .width('50%')
+                .padding({ left: 4, right: 4, bottom: 8 })
+              }, (query: string) => query)
+            }
+            .width('100%')
           }
+          .width('100%')
+          .backgroundColor(this.suggestionCardBg())
+          .border({ width: 1, color: $r('app.color.card_border') })
+          .borderRadius(this.cardRadius)
+          .margin({ left: 16, right: 16, bottom: 12 })
+        }
 
-          if (this.showSearchHotSearch) {
-            this.HotSearchList();
-          }
+        if (this.showSearchHotSearch) {
+          this.HotSearchList();
         }
       } else if (this.showSearchHistory) {
         Column({ space: 8 }) {
           Text(this.scopeMemberHashId.length > 0
             ? '输入关键词搜索 TA 的创作'
             : '暂无搜索历史，输入关键词搜索后会保存在这里')
-            .fontSize(14)
+            .fontSize(this.fontSecondary)
             .fontColor($r('app.color.text_secondary'))
         }
         .width('100%')
@@ -777,12 +844,13 @@ struct SearchPage {
         .padding({ top: 80, left: 24, right: 24 })
       } else {
         Text('请输入搜索内容')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontColor($r('app.color.text_secondary'))
           .padding({ left: 18, right: 18, top: 20, bottom: 20 })
       }
     }
     .width('100%')
+    .padding({ top: 12 })
   }
 
   @Builder
@@ -794,12 +862,12 @@ struct SearchPage {
             .width(36)
             .height(36)
             .objectFit(ImageFit.Cover)
-            .borderRadius(18)
+            .borderRadius(this.pillRadius)
             .clip(true)
         } else {
           Column() {
             Text(item.authorName.length > 0 ? item.authorName.slice(0, 1) : '知')
-              .fontSize(13)
+              .fontSize(this.fontMeta)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.action_text'))
           }
@@ -808,17 +876,17 @@ struct SearchPage {
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
         }
 
         Column({ space: 2 }) {
           Text(item.authorName.length > 0 ? item.authorName : '知乎搜索')
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
 
           Text(item.authorHeadline.length > 0 ? item.authorHeadline : item.actionText)
-            .fontSize(11)
+            .fontSize(this.fontCaption)
             .fontColor($r('app.color.text_secondary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -856,7 +924,7 @@ struct SearchPage {
           }
 
           Text(item.details)
-            .fontSize(12)
+            .fontSize(this.fontCaption)
             .fontColor($r('app.color.text_tertiary'))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -869,17 +937,17 @@ struct SearchPage {
             .width(92)
             .height(92)
             .objectFit(ImageFit.Cover)
-            .borderRadius(12)
+            .borderRadius(this.cardRadius)
         }
       }
       .alignItems(VerticalAlign.Top)
     }
     .width('100%')
-    .padding(16)
+    .padding(this.cardPadding)
     .margin({ left: 16, right: 16, bottom: 12 })
     .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
     .border({ width: 1, color: $r('app.color.card_border') })
-    .borderRadius(16)
+    .borderRadius(this.cardRadius)
     .clip(true)
     .shadow({
       radius: 10,
@@ -898,11 +966,11 @@ struct SearchPage {
       if (this.resultLoading && this.resultItems.length === 0) {
         Column({ space: 10 }) {
           Text('正在搜索...')
-            .fontSize(18)
+            .fontSize(this.fontSubhead)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.text_primary'))
           Text('正在从知乎搜索接口拉取内容')
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor($r('app.color.text_secondary'))
         }
         .alignItems(HorizontalAlign.Center)
@@ -912,17 +980,17 @@ struct SearchPage {
       } else if (this.resultError.length > 0 && this.resultItems.length === 0) {
         Column({ space: 12 }) {
           Text(this.resultError)
-            .fontSize(15)
+            .fontSize(this.fontBody)
             .fontColor($r('app.color.error_text'))
             .textAlign(TextAlign.Center)
 
           Text('重新搜索')
-            .fontSize(14)
+            .fontSize(this.fontSecondary)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.action_text'))
             .padding({ left: 18, right: 18, top: 10, bottom: 10 })
             .backgroundColor($r('app.color.action_background'))
-            .borderRadius(18)
+            .borderRadius(this.pillRadius)
             .onClick(() => {
               this.submitSearch(this.searchQuery);
             })
@@ -933,7 +1001,7 @@ struct SearchPage {
         .padding({ top: 96, left: 24, right: 24 })
       } else if (this.resultItems.length === 0) {
         Text('暂无搜索结果')
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_secondary'))
           .width('100%')
@@ -946,13 +1014,13 @@ struct SearchPage {
 
         if (this.resultError.length > 0) {
           Text(this.resultError)
-            .fontSize(12)
+            .fontSize(this.fontCaption)
             .fontColor($r('app.color.error_text'))
             .padding({ left: 18, right: 18, top: 0, bottom: 10 })
         }
 
         Text(this.resultNextUrl.length === 0 ? '已经到底了' : (this.resultLoadingMore ? '正在加载更多...' : '加载更多'))
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontWeight(FontWeight.Medium)
           .fontColor(
             this.resultNextUrl.length === 0 || this.resultLoadingMore
@@ -962,7 +1030,7 @@ struct SearchPage {
           .padding({ left: 18, right: 18, top: 12, bottom: 12 })
           .margin({ top: 4, bottom: 20 })
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
           .enabled(this.resultNextUrl.length > 0 && !this.resultLoadingMore)
           .onClick(() => {
             this.loadMoreResults();
@@ -975,7 +1043,7 @@ struct SearchPage {
   @Builder
   private FilterChip(label: string, selected: boolean, onClick: () => void): void {
     Text(label)
-      .fontSize(13)
+      .fontSize(this.fontMeta)
       .fontColor(selected ? $r('app.color.action_text') : $r('app.color.text_secondary'))
       .padding({ left: 12, right: 12, top: 6, bottom: 6 })
       .backgroundColor(selected ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
@@ -1114,30 +1182,30 @@ struct SearchPage {
   private SearchTabBar(): void {
     Row({ space: 8 }) {
       Text('全站')
-        .fontSize(15)
+        .fontSize(this.fontBody)
         .fontWeight(this.searchTab === 'general' ? FontWeight.Bold : FontWeight.Normal)
         .fontColor(this.searchTab === 'general' ? $r('app.color.action_text') : $r('app.color.text_secondary'))
         .padding({ left: 18, right: 18, top: 8, bottom: 8 })
         .backgroundColor(this.searchTab === 'general' ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
-        .borderRadius(18)
+        .borderRadius(this.pillRadius)
         .onClick(() => { this.onSearchTabChanged('general'); })
 
       Text('用户')
-        .fontSize(15)
+        .fontSize(this.fontBody)
         .fontWeight(this.searchTab === 'people' ? FontWeight.Bold : FontWeight.Normal)
         .fontColor(this.searchTab === 'people' ? $r('app.color.action_text') : $r('app.color.text_secondary'))
         .padding({ left: 18, right: 18, top: 8, bottom: 8 })
         .backgroundColor(this.searchTab === 'people' ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
-        .borderRadius(18)
+        .borderRadius(this.pillRadius)
         .onClick(() => { this.onSearchTabChanged('people'); })
 
       Text('话题')
-        .fontSize(15)
+        .fontSize(this.fontBody)
         .fontWeight(this.searchTab === 'topic' ? FontWeight.Bold : FontWeight.Normal)
         .fontColor(this.searchTab === 'topic' ? $r('app.color.action_text') : $r('app.color.text_secondary'))
         .padding({ left: 18, right: 18, top: 8, bottom: 8 })
         .backgroundColor(this.searchTab === 'topic' ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
-        .borderRadius(18)
+        .borderRadius(this.pillRadius)
         .onClick(() => { this.onSearchTabChanged('topic'); })
     }
     .width('100%')
@@ -1147,14 +1215,18 @@ struct SearchPage {
 
   @Builder
   private PersonResultCard(person: SearchPeopleResult): void {
-    Row({ space: 12 }) {
+    ContentCard({ onTap: () => {
+      const token = person.urlToken.length > 0 ? person.urlToken : person.id;
+      router.pushUrl({ url: 'pages/People', params: { urlToken: token } });
+    } }) {
+      Row({ space: 12 }) {
       if (person.avatarUrl.length > 0) {
         Image(person.avatarUrl)
           .width(44).height(44).objectFit(ImageFit.Cover).borderRadius(22).clip(true)
       } else {
         Column() {
           Text(person.name.slice(0, 1))
-            .fontSize(16).fontWeight(FontWeight.Bold).fontColor($r('app.color.action_text'))
+            .fontSize(this.fontBody).fontWeight(FontWeight.Bold).fontColor($r('app.color.action_text'))
         }
         .width(44).height(44).justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
         .backgroundColor($r('app.color.action_background')).borderRadius(22)
@@ -1162,36 +1234,33 @@ struct SearchPage {
 
       Column({ space: 4 }) {
         Text(person.name)
-          .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
+          .fontSize(this.fontBody).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
           .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
         if (person.headline.length > 0) {
           Text(person.headline)
-            .fontSize(13).fontColor($r('app.color.text_secondary'))
+            .fontSize(this.fontMeta).fontColor($r('app.color.text_secondary'))
             .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         Text(`${person.followerCount} 粉丝`)
-          .fontSize(12).fontColor($r('app.color.text_secondary'))
+          .fontSize(this.fontCaption).fontColor($r('app.color.text_secondary'))
       }
       .layoutWeight(1).alignItems(HorizontalAlign.Start)
     }
-    .width('100%').padding(16).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-    .border({ width: 1, color: $r('app.color.card_border') }).borderRadius(16)
-    .onClick(() => {
-      const token = person.urlToken.length > 0 ? person.urlToken : person.id;
-      router.pushUrl({ url: 'pages/People', params: { urlToken: token } });
-    })
+      .width('100%')
+    }
   }
 
   @Builder
   private TopicResultCard(topic: SearchTopicResult): void {
-    Row({ space: 12 }) {
+    ContentCard({ onTap: () => { openZhihuTopic(topic.id, topic.name); } }) {
+      Row({ space: 12 }) {
       if (topic.avatarUrl.length > 0) {
         Image(topic.avatarUrl)
           .width(44).height(44).objectFit(ImageFit.Cover).borderRadius(22).clip(true)
       } else {
         Column() {
           Text(topic.name.slice(0, 1))
-            .fontSize(16).fontWeight(FontWeight.Bold).fontColor($r('app.color.action_text'))
+            .fontSize(this.fontBody).fontWeight(FontWeight.Bold).fontColor($r('app.color.action_text'))
         }
         .width(44).height(44).justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
         .backgroundColor($r('app.color.action_background')).borderRadius(22)
@@ -1199,23 +1268,20 @@ struct SearchPage {
 
       Column({ space: 4 }) {
         Text(topic.name)
-          .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
+          .fontSize(this.fontBody).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
           .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
         if (topic.excerpt.length > 0) {
           Text(topic.excerpt)
-            .fontSize(13).fontColor($r('app.color.text_secondary'))
+            .fontSize(this.fontMeta).fontColor($r('app.color.text_secondary'))
             .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         Text(`${topic.discussCount} 讨论 · ${topic.visitCount} 浏览`)
-          .fontSize(12).fontColor($r('app.color.text_secondary'))
+          .fontSize(this.fontCaption).fontColor($r('app.color.text_secondary'))
       }
       .layoutWeight(1).alignItems(HorizontalAlign.Start)
     }
-    .width('100%').padding(16).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-    .border({ width: 1, color: $r('app.color.card_border') }).borderRadius(16)
-    .onClick(() => {
-      openZhihuTopic(topic.id, topic.name);
-    })
+      .width('100%')
+    }
   }
 
   @Builder
@@ -1223,22 +1289,22 @@ struct SearchPage {
     Column() {
       if (this.peopleLoading && this.peopleItems.length === 0) {
         Text('正在搜索用户...')
-          .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_secondary'))
+          .fontSize(this.fontBody).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_secondary'))
           .width('100%').textAlign(TextAlign.Center).padding({ top: 96 })
       } else if (this.peopleError.length > 0 && this.peopleItems.length === 0) {
         Column({ space: 12 }) {
-          Text(this.peopleError).fontSize(15).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
+          Text(this.peopleError).fontSize(this.fontBody).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
           Text('重新搜索')
-            .fontSize(14).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
+            .fontSize(this.fontSecondary).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
             .padding({ left: 18, right: 18, top: 10, bottom: 10 })
-            .backgroundColor($r('app.color.action_background')).borderRadius(18)
+            .backgroundColor($r('app.color.action_background')).borderRadius(this.pillRadius)
             .onClick(() => { this.doSearchPeople(false); })
         }
         .alignItems(HorizontalAlign.Center).justifyContent(FlexAlign.Center)
         .width('100%').padding({ top: 96, left: 24, right: 24 })
       } else if (this.peopleItems.length === 0) {
         Text('未找到相关用户')
-          .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_secondary'))
+          .fontSize(this.fontBody).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_secondary'))
           .width('100%').textAlign(TextAlign.Center).padding({ top: 96 })
       } else {
         ForEach(this.peopleItems, (p: SearchPeopleResult) => {
@@ -1246,11 +1312,11 @@ struct SearchPage {
         }, (p: SearchPeopleResult) => p.id)
         if (this.peopleError.length > 0) {
           Text(this.peopleError)
-            .fontSize(12).fontColor($r('app.color.error_text'))
+            .fontSize(this.fontCaption).fontColor($r('app.color.error_text'))
             .padding({ left: 18, right: 18, top: 0, bottom: 10 })
         }
         Text(this.peopleNextUrl.length === 0 ? '已经到底了' : (this.peopleLoadingMore ? '正在加载更多...' : '加载更多'))
-          .fontSize(14).fontWeight(FontWeight.Medium)
+          .fontSize(this.fontSecondary).fontWeight(FontWeight.Medium)
           .fontColor(
             this.peopleNextUrl.length === 0 || this.peopleLoadingMore
               ? $r('app.color.text_tertiary')
@@ -1259,7 +1325,7 @@ struct SearchPage {
           .padding({ left: 18, right: 18, top: 12, bottom: 12 })
           .margin({ top: 4, bottom: 20 })
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
           .enabled(this.peopleNextUrl.length > 0 && !this.peopleLoadingMore)
           .onClick(() => { this.doSearchPeople(true); })
       }
@@ -1272,22 +1338,22 @@ struct SearchPage {
     Column() {
       if (this.topicLoading && this.topicItems.length === 0) {
         Text('正在搜索话题...')
-          .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_secondary'))
+          .fontSize(this.fontBody).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_secondary'))
           .width('100%').textAlign(TextAlign.Center).padding({ top: 96 })
       } else if (this.topicError.length > 0 && this.topicItems.length === 0) {
         Column({ space: 12 }) {
-          Text(this.topicError).fontSize(15).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
+          Text(this.topicError).fontSize(this.fontBody).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
           Text('重新搜索')
-            .fontSize(14).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
+            .fontSize(this.fontSecondary).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
             .padding({ left: 18, right: 18, top: 10, bottom: 10 })
-            .backgroundColor($r('app.color.action_background')).borderRadius(18)
+            .backgroundColor($r('app.color.action_background')).borderRadius(this.pillRadius)
             .onClick(() => { this.doSearchTopics(false); })
         }
         .alignItems(HorizontalAlign.Center).justifyContent(FlexAlign.Center)
         .width('100%').padding({ top: 96, left: 24, right: 24 })
       } else if (this.topicItems.length === 0) {
         Text('未找到相关话题')
-          .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_secondary'))
+          .fontSize(this.fontBody).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_secondary'))
           .width('100%').textAlign(TextAlign.Center).padding({ top: 96 })
       } else {
         ForEach(this.topicItems, (t: SearchTopicResult) => {
@@ -1295,11 +1361,11 @@ struct SearchPage {
         }, (t: SearchTopicResult) => t.id)
         if (this.topicError.length > 0) {
           Text(this.topicError)
-            .fontSize(12).fontColor($r('app.color.error_text'))
+            .fontSize(this.fontCaption).fontColor($r('app.color.error_text'))
             .padding({ left: 18, right: 18, top: 0, bottom: 10 })
         }
         Text(this.topicNextUrl.length === 0 ? '已经到底了' : (this.topicLoadingMore ? '正在加载更多...' : '加载更多'))
-          .fontSize(14).fontWeight(FontWeight.Medium)
+          .fontSize(this.fontSecondary).fontWeight(FontWeight.Medium)
           .fontColor(
             this.topicNextUrl.length === 0 || this.topicLoadingMore
               ? $r('app.color.text_tertiary')
@@ -1308,7 +1374,7 @@ struct SearchPage {
           .padding({ left: 18, right: 18, top: 12, bottom: 12 })
           .margin({ top: 4, bottom: 20 })
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
           .enabled(this.topicNextUrl.length > 0 && !this.topicLoadingMore)
           .onClick(() => { this.doSearchTopics(true); })
       }
@@ -1318,7 +1384,7 @@ struct SearchPage {
 
   build() {
     Column() {
-      this.SearchTopBar();
+      this.SearchHeader()
 
       if (this.hasSearched) {
         this.SearchTabBar();
@@ -1340,7 +1406,7 @@ struct SearchPage {
             } else if (this.scopeMemberHashId.length > 0) {
               Column({ space: 8 }) {
                 Text('输入关键词，查找 TA 的回答、文章、想法等')
-                  .fontSize(14)
+                  .fontSize(this.fontSecondary)
                   .fontColor($r('app.color.text_secondary'))
               }
               .width('100%')

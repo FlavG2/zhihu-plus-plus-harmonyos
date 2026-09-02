@@ -3,6 +3,78 @@
     {
       "name": "page_horizontal_padding",
       "value": "20vp"
+    },
+    {
+      "name": "font_display_size",
+      "value": "30fp"
+    },
+    {
+      "name": "font_heading_size",
+      "value": "20fp"
+    },
+    {
+      "name": "font_subhead_size",
+      "value": "18fp"
+    },
+    {
+      "name": "font_subtitle_size",
+      "value": "16fp"
+    },
+    {
+      "name": "font_body_size",
+      "value": "16fp"
+    },
+    {
+      "name": "font_secondary_size",
+      "value": "14fp"
+    },
+    {
+      "name": "font_meta_size",
+      "value": "13fp"
+    },
+    {
+      "name": "font_caption_size",
+      "value": "12fp"
+    },
+    {
+      "name": "font_badge_size",
+      "value": "10fp"
+    },
+    {
+      "name": "font_symbol_size",
+      "value": "24fp"
+    },
+    {
+      "name": "spacing_xs",
+      "value": "4vp"
+    },
+    {
+      "name": "spacing_sm",
+      "value": "8vp"
+    },
+    {
+      "name": "spacing_md",
+      "value": "12vp"
+    },
+    {
+      "name": "spacing_lg",
+      "value": "24vp"
+    },
+    {
+      "name": "card_padding",
+      "value": "16vp"
+    },
+    {
+      "name": "card_radius",
+      "value": "16vp"
+    },
+    {
+      "name": "pill_radius",
+      "value": "18vp"
+    },
+    {
+      "name": "button_radius",
+      "value": "20vp"
     }
   ]
 }

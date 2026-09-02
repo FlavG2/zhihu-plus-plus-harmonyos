@@ -8,11 +8,13 @@ import { http } from '@kit.NetworkKit';
 import { util } from '@kit.ArkTS';
 import { fileIo } from '@kit.CoreFileKit';
 import { picker } from '@kit.CoreFileKit';
-import { pasteboard } from '@kit.BasicServicesKit';
+import { pasteboard, zlib } from '@kit.BasicServicesKit';
 import { escapeHtml } from '../utils/ZhihuHtml';
 import { normalizeUrl, sanitizeFileName, htmlToMarkdown } from '../utils/HtmlText';
 import { ZhihuCommentItem } from '../models/ZhihuContentModels';
 import { formatTimestamp } from '../utils/Time';
+import { ArticleDetailService } from './ArticleDetailService';
+import { HomeFeedItem } from '../models/ZhihuModels';
 
 export interface ArticleExportMeta {
   readonly title: string;
@@ -408,4 +410,156 @@ export async function saveTextFile(
 export async function copyText(text: string): Promise<void> {
   const pb = pasteboard.getSystemPasteboard();
   pb.setData(pasteboard.createData(pasteboard.MIMETYPE_TEXT_PLAIN, text));
+}
+
+// ============================================================================
+// 收藏夹整夹导出 HTML（对齐安卓 CollectionContentViewModel.exportAllToHtmlZip）
+// 每个回答/文章各生成一个 HTML（复用 buildExportHtml 同款模板），再整文件夹压成 .zip。
+// 非 answer/article 的条目计为 skipped（对齐安卓只导出回答/文章）。
+// ============================================================================
+
+export interface CollectionExportProgress {
+  readonly total: number;
+  readonly processed: number;
+  readonly success: number;
+  readonly skipped: number;
+  readonly failed: number;
+  readonly currentTitle: string;
+}
+
+export interface CollectionExportResult {
+  readonly total: number;
+  readonly success: number;
+  readonly skipped: number;
+  readonly failed: number;
+  readonly zipFilePath?: string;
+}
+
+/**
+ * 把整夹收藏导出为 .zip（内含每个回答/文章一份 HTML）。
+ * @param includeImages true=图片下载并 base64 内联（更慢），false=保留原始链接
+ */
+export async function exportCollectionToZip(
+  context: common.Context,
+  collectionTitle: string,
+  items: HomeFeedItem[],
+  includeImages: boolean,
+  onProgress: (progress: CollectionExportProgress) => void
+): Promise<CollectionExportResult> {
+  const cacheDir: string = context.cacheDir;
+  const safeTitle = sanitizeFileName(collectionTitle) || 'collection';
+  const timestamp = Date.now();
+  const stagingDir = `${cacheDir}/collection_export_${safeTitle}_${timestamp}`;
+  fileIo.mkdirSync(stagingDir);
+
+  let processed = 0;
+  let success = 0;
+  let skipped = 0;
+  let failed = 0;
+  const total = items.length;
+
+  const emit = (currentTitle: string = '') => {
+    onProgress({ total, processed, success, skipped, failed, currentTitle });
+  };
+  emit();
+
+  for (const item of items) {
+    if (item.type !== 'answer' && item.type !== 'article') {
+      skipped++;
+      processed++;
+      emit();
+      continue;
+    }
+    if (item.nativeTarget === undefined) {
+      skipped++;
+      processed++;
+      emit();
+      continue;
+    }
+    try {
+      emit(item.title);
+      const detail = await ArticleDetailService.loadDetail(context, item.nativeTarget);
+      const meta: ArticleExportMeta = {
+        title: detail.title,
+        authorName: detail.author?.name ?? '匿名用户',
+        authorBio: detail.author?.headline ?? '',
+        authorAvatarSrc: detail.author?.avatarUrl ?? '',
+        voteUpCount: detail.voteCount,
+        commentCount: detail.commentCount,
+        contentHtml: detail.htmlContent,
+        createdEpochSeconds: detail.createdTime,
+        updatedEpochSeconds: detail.updatedTime,
+        contentId: detail.target.id,
+        contentType: detail.target.kind === 'article' ? 'article' : 'answer'
+      };
+      const html = await buildExportHtml(meta, {
+        includeImages,
+        includeAppAttribution: true
+      });
+      const fileName = buildExportFileName(meta, 'html');
+      const filePath = `${stagingDir}/${fileName}`;
+      const file = fileIo.openSync(
+        filePath,
+        fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+      );
+      try {
+        fileIo.writeSync(file.fd, html);
+      } finally {
+        fileIo.closeSync(file);
+      }
+      success++;
+    } catch (_e) {
+      failed++;
+    } finally {
+      processed++;
+      emit();
+    }
+  }
+
+  let zipFilePath: string | undefined = undefined;
+  if (success > 0) {
+    zipFilePath = `${cacheDir}/zhihu++_${safeTitle}_${formatTimestampForFile(timestamp)}.zip`;
+    await zlib.compressFile(stagingDir, zipFilePath, {});
+  }
+  return { total, success, skipped, failed, zipFilePath };
+}
+
+/**
+ * 把沙箱内的二进制文件（如导出的 .zip）通过 DocumentViewPicker 另存到用户指定位置。
+ */
+export async function saveBinaryFile(
+  context: common.Context,
+  sourcePath: string,
+  fileName: string
+): Promise<boolean> {
+  try {
+    const documentPicker = new picker.DocumentViewPicker(context);
+    const options = new picker.DocumentSaveOptions();
+    options.newFileNames = [fileName];
+    const uris = await documentPicker.save(options);
+    if (!uris || uris.length === 0) {
+      return false;
+    }
+    const uri = uris[0];
+    const srcFile = fileIo.openSync(sourcePath, fileIo.OpenMode.READ_ONLY);
+    try {
+      const stat = fileIo.statSync(sourcePath);
+      const buf = new ArrayBuffer(stat.size);
+      fileIo.readSync(srcFile.fd, buf);
+      const dstFile = fileIo.openSync(
+        uri,
+        fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+      );
+      try {
+        fileIo.writeSync(dstFile.fd, buf);
+      } finally {
+        fileIo.closeSync(dstFile);
+      }
+    } finally {
+      fileIo.closeSync(srcFile);
+    }
+    return true;
+  } catch (_e) {
+    return false;
+  }
 }

@@ -8,6 +8,7 @@ import {
   BlockedTopic
 } from '../services/BlocklistRepository';
 import { ThemeColors } from '../services/ThemeColors';
+import { PageHeader } from '../components/PageHeader';
 
 type BlockKind = 'keyword' | 'user' | 'questionAuthor' | 'topic';
 
@@ -26,6 +27,10 @@ struct BlocklistManagePage {
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
   @StorageLink('oledBlack') oledBlack: boolean = false;
   @StorageLink('isDark') isDark: boolean = false;
+  @State topBarHeight: number = 0;
+  @StorageProp('fontSecondary') fontSecondary: string = '14fp';
+  @StorageProp('fontMeta') fontMeta: string = '13fp';
+  @StorageProp('fontBodySm') fontBodySm: string = '15fp';
 
   private context(): common.Context {
     return getContext(this) as common.Context;
@@ -57,36 +62,18 @@ struct BlocklistManagePage {
     this.reload();
   }
 
-  @Builder
-  Header(title: string) {
-    Row() {
-      Text('‹')
-        .fontSize(28)
-        .fontColor($r('app.color.text_primary'))
-        .onClick(() => router.back({ url: '' }))
-        .padding({ left: 16, right: 8 })
-      Text(title)
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
-    }
-    .width('100%')
-    .height(56)
-    .alignItems(VerticalAlign.Center)
-    .padding({ top: this.topSafeAreaVp })
-  }
 
   @Builder
   ItemRow(name: string, kind: BlockKind, idOrText: string) {
     Row() {
       Text(name)
-        .fontSize(14)
+        .fontSize(this.fontSecondary)
         .fontColor($r('app.color.text_primary'))
         .layoutWeight(1)
         .maxLines(1)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
       Text('删除')
-        .fontSize(13)
+        .fontSize(this.fontMeta)
         .fontColor($r('app.color.error_text'))
         .padding({ left: 12, right: 4 })
         .onClick(() => {
@@ -101,7 +88,7 @@ struct BlocklistManagePage {
   @Builder
   EmptyRow(hint: string) {
     Text(hint)
-      .fontSize(13)
+      .fontSize(this.fontMeta)
       .fontColor($r('app.color.text_tertiary'))
       .width('100%')
   }
@@ -112,15 +99,15 @@ struct BlocklistManagePage {
     Column({ space: 10 }) {
       Row() {
         Text('屏蔽关键词')
-          .fontSize(15)
+          .fontSize(this.fontBodySm)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
         Text(`${this.keywords.length}`)
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontColor($r('app.color.text_tertiary'))
         Text(this.keywordExpanded ? '▾' : '▸')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontColor($r('app.color.text_tertiary'))
           .margin({ left: 8 })
       }
@@ -150,15 +137,15 @@ struct BlocklistManagePage {
     Column({ space: 10 }) {
       Row() {
         Text('屏蔽用户')
-          .fontSize(15)
+          .fontSize(this.fontBodySm)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
         Text(`${this.users.length}`)
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontColor($r('app.color.text_tertiary'))
         Text(this.userExpanded ? '▾' : '▸')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontColor($r('app.color.text_tertiary'))
           .margin({ left: 8 })
       }
@@ -189,15 +176,15 @@ struct BlocklistManagePage {
     Column({ space: 10 }) {
       Row() {
         Text('屏蔽提问者')
-          .fontSize(15)
+          .fontSize(this.fontBodySm)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
         Text(`${this.questionAuthors.length}`)
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontColor($r('app.color.text_tertiary'))
         Text(this.questionAuthorExpanded ? '▾' : '▸')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontColor($r('app.color.text_tertiary'))
           .margin({ left: 8 })
       }
@@ -227,15 +214,15 @@ struct BlocklistManagePage {
     Column({ space: 10 }) {
       Row() {
         Text('屏蔽话题')
-          .fontSize(15)
+          .fontSize(this.fontBodySm)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
         Text(`${this.topics.length}`)
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontColor($r('app.color.text_tertiary'))
         Text(this.topicExpanded ? '▾' : '▸')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontColor($r('app.color.text_tertiary'))
           .margin({ left: 8 })
       }
@@ -260,8 +247,14 @@ struct BlocklistManagePage {
   }
 
   build() {
-    Column() {
-      this.Header('管理屏蔽列表')
+    Stack({ alignContent: Alignment.Top }) {
+      PageHeader({ title: '管理屏蔽列表' })
+        .zIndex(2)
+        .onAreaChange((_old: Area, newValue: Area) => {
+          if (newValue.height > 0) {
+            this.topBarHeight = Number(newValue.height);
+          }
+        })
       Scroll() {
         Column({ space: 16 }) {
           this.KeywordSection()
@@ -271,8 +264,9 @@ struct BlocklistManagePage {
         }
         .padding({ left: 16, right: 16, top: 8, bottom: 32 })
       }
-      .layoutWeight(1)
       .width('100%')
+      .height('100%')
+      .padding({ top: this.topBarHeight })
     }
     .width('100%')
     .height('100%')

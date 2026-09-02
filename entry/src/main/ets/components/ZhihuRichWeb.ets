@@ -3,8 +3,9 @@ import { hilog } from '@kit.PerformanceAnalysisKit';
 import { webview } from '@kit.ArkWeb';
 import { AppearanceThemeMode } from '../services/AppearanceSettingsRepository';
 import { ThemeColors } from '../services/ThemeColors';
-import { htmlToDataUrl } from '../utils/ZhihuHtml';
+import { htmlToDataUrl, injectStyleIntoHtml } from '../utils/ZhihuHtml';
 import {
+  buildReaderVarsStyle,
   buildThemeScript,
   loadZhihuWebScripts,
   ReaderStyle,
@@ -61,7 +62,9 @@ export struct ZhihuRichWeb {
     };
     this.scripts.push({
       script: buildThemeScript(resolvedThemeMode, this.oledBlack, reader),
-      scriptRules: []
+      // 规则置为通配：空规则存在「脚本压根没被注入」的风险，那才是老 BUG 一直修不掉的原因。
+      // 首帧正确性现已改由 updatePageUrl 内联的 <style> 保证，这里只作兜底与实时调节。
+      scriptRules: ['*']
     });
     this.updatePageUrl();
   }
@@ -115,7 +118,26 @@ export struct ZhihuRichWeb {
 
   private updatePageUrl(): void {
     const html = this.html.trim();
-    this.pageUrl = html.length > 0 ? htmlToDataUrl(html) : 'about:blank';
+    if (html.length === 0) {
+      this.pageUrl = 'about:blank';
+      this.contentLoaded = false;
+      return;
+    }
+    // 关键：把阅读体验变量直接写进 HTML 的 <style>，随文档一起解析，首帧即生效。
+    // 这比任何「渲染后再用脚本改值」的方案都可靠——文档解析时变量就已就位，
+    // 不存在「先按默认值渲染、随后被改值重排」的窗口，彻底消除跳动。
+    // 这里取的是实时值（而不是 aboutToAppear 时的快照），故每次 html 更新都会重算。
+    const reader: ReaderStyle = {
+      fontScale: this.readerFontScale,
+      lineHeight: this.readerLineHeight,
+      paraSpacing: this.readerParaSpacing
+    };
+    const style = buildReaderVarsStyle(
+      resolveZhihuThemeMode(this.context(), this.themeMode),
+      this.oledBlack,
+      reader
+    );
+    this.pageUrl = htmlToDataUrl(injectStyleIntoHtml(html, style));
     this.contentLoaded = false;
   }
 
@@ -167,7 +189,13 @@ export struct ZhihuRichWeb {
         methodList: ['postMessage'],
         controller: this.controller
       })
-      .runJavaScriptOnDocumentEnd(this.scripts.map((item: ZhihuWebScript): ScriptItem => {
+      // 注入时机很关键。
+      // documentEnd = 「页面加载完成、DOM 已渲染之后」：首帧先按 CSS 默认值
+      // (--reader-font-scale 默认 1) 渲染，脚本随后改成真值触发重排，
+      // 表现为每次进文章「先原字号、一秒内跳成设定字号」的老 BUG。
+      // headEnd = head 解析完、body 尚未渲染时执行：此时 documentElement 已存在，
+      // 设完 CSS 变量再渲染 body，首帧字号即正确，无闪烁。
+      .runJavaScriptOnHeadEnd(this.scripts.map((item: ZhihuWebScript): ScriptItem => {
         return {
           script: item.script,
           scriptRules: item.scriptRules

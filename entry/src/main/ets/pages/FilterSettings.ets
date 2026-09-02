@@ -3,6 +3,8 @@ import common from '@ohos.app.ability.common';
 import { FilterSettingsRepository, FILTER_KEYS, RecommendAlgo } from '../services/FilterSettingsRepository';
 import { BlockHistoryRepository } from '../services/BlockHistoryRepository';
 import { ThemeColors } from '../services/ThemeColors';
+import { PageHeader } from '../components/PageHeader';
+import { SettingsCard, NumberSettingRow } from './FilterSettingRows';
 
 interface FilterToggleItem {
   key: string;
@@ -16,13 +18,10 @@ interface AlgoOption {
   value: RecommendAlgo;
 }
 
-// 推荐设置区：前两项为纯配置，其余为过滤规则（暂未实现）
+// 推荐设置区：前两项为纯配置；质量 / 智能过滤已下放到独立子页（齿轮图标导航）
 const RECOMMEND_TOGGLES: FilterToggleItem[] = [
   { key: FILTER_KEYS.recommendLogin, title: '推荐内容时登录', desc: '获取推荐时携带登录凭证', implemented: true },
   { key: FILTER_KEYS.autoRefresh, title: '启动时自动刷新首页', desc: '关闭后优先显示上次缓存内容', implemented: true },
-  { key: FILTER_KEYS.qualityFilter, title: '启用质量过滤规则', desc: '按赞同数、关注数等指标过滤低质内容', implemented: true },
-  { key: FILTER_KEYS.smartFilter, title: '启用智能内容过滤', desc: '自动过滤展示超 N 次的内容', implemented: true },
-  { key: FILTER_KEYS.filterFollowed, title: '过滤已关注用户内容', desc: '对已关注用户也应用过滤规则', implemented: true },
 ];
 
 // 内容屏蔽区
@@ -43,9 +42,6 @@ const RULE_BLOCK_TOGGLES: FilterToggleItem[] = [
 const FILTER_TOGGLE_DEFAULTS: Record<string, boolean> = {
   'recommend_login': true,
   'auto_refresh_on_launch': true,
-  'quality_filter': true,
-  'smart_filter': true,
-  'filter_followed': false,
   'block_zhihu_edu': true,
   'block_wechat': true,
   'block_yanxuan': true,
@@ -54,32 +50,6 @@ const FILTER_TOGGLE_DEFAULTS: Record<string, boolean> = {
   'topic_block': true,
   'block_ad': true,
 };
-
-// 通用卡片容器
-@Component
-struct SettingsCard {
-  title: string = '';
-  @BuilderParam content: () => void;
-  @StorageLink('oledBlack') oledBlack: boolean = false;
-  @StorageLink('isDark') isDark: boolean = false;
-
-  build() {
-    Column({ space: 0 }) {
-      Text(this.title)
-        .fontSize(13)
-        .fontColor($r('app.color.text_secondary'))
-        .padding({ left: 16, top: 12, bottom: 6 })
-      Column({ space: 0 }) {
-        this.content();
-      }
-      .width('100%')
-      .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-      .border({ width: 1, color: $r('app.color.card_border') })
-      .borderRadius(20)
-    }
-    .width('100%')
-  }
-}
 
 @Entry
 @Component
@@ -93,6 +63,12 @@ struct FilterSettingsPage {
   @StorageLink('oledBlack') oledBlack: boolean = false;
   @StorageLink('isDark') isDark: boolean = false;
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
+  @State private topBarHeight: number = 0;
+  @StorageProp('fontSubhead') fontSubhead: string = '18fp';
+  @StorageProp('fontMeta') fontMeta: string = '13fp';
+  @StorageProp('fontBody') fontBody: string = '16fp';
+  @StorageProp('fontCaption') fontCaption: string = '12fp';
+  @StorageProp('fontSecondary') fontSecondary: string = '14fp';
 
   private algoOptions: AlgoOption[] = [
     { label: '网页端推荐', value: 'web' },
@@ -172,7 +148,7 @@ struct FilterSettingsPage {
   @Builder ThresholdSheet() {
     Column({ space: 16 }) {
       Text('主题屏蔽阈值')
-        .fontSize(18)
+        .fontSize(this.fontSubhead)
         .fontWeight(FontWeight.Medium)
         .fontColor($r('app.color.text_primary'))
         .width('100%')
@@ -180,7 +156,7 @@ struct FilterSettingsPage {
         .padding({ left: 20, top: 8 })
 
       Text('回答/文章所关联的问题包含 ≥ N 个被屏蔽主题时隐藏；N=1 表示任一命中即屏蔽。')
-        .fontSize(13)
+        .fontSize(this.fontMeta)
         .fontColor($r('app.color.text_secondary'))
         .width('100%')
         .textAlign(TextAlign.Start)
@@ -219,22 +195,45 @@ struct FilterSettingsPage {
     .width('100%')
   }
 
-  @Builder Header(title: string) {
-    Row() {
-      Text('‹')
-        .fontSize(28)
-        .fontColor($r('app.color.text_primary'))
-        .onClick(() => router.back({ url: '' }))
-        .padding({ left: 16, right: 8 })
-      Text(title)
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
+
+  // 带齿轮的设置入口行：点击齿轮 / 标题 / 箭头跳转子页（无总开关，仅导航）
+  @Builder GearNavRow(title: string, desc: string, subPage: string, showDivider: boolean) {
+    Column({ space: 0 }) {
+      Row({ space: 8 }) {
+        Column({ space: 4 }) {
+          Text(title)
+            .fontSize(this.fontBody)
+            .fontColor($r('app.color.text_primary'))
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          if (desc.length > 0) {
+            Text(desc)
+              .fontSize(this.fontCaption)
+              .fontColor($r('app.color.text_secondary'))
+          }
+        }
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
+
+        SymbolGlyph($r('sys.symbol.gearshape'))
+          .fontSize(this.fontSubhead)
+          .fontColor([$r('app.color.text_tertiary')])
+
+        Text('›')
+          .fontSize(this.fontBody)
+          .fontColor($r('app.color.text_tertiary'))
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 14, bottom: 14 })
+      .onClick(() => router.pushUrl({ url: subPage }))
+
+      if (showDivider) {
+        Divider()
+          .color($r('app.color.card_border'))
+          .padding({ left: 16, right: 16 })
+      }
     }
     .width('100%')
-    .height(56)
-    .alignItems(VerticalAlign.Center)
-    .padding({ top: this.topSafeAreaVp })
   }
 
   @Builder ToggleRow(item: FilterToggleItem, showDivider: boolean) {
@@ -242,11 +241,11 @@ struct FilterSettingsPage {
       Row({ space: 12 }) {
         Column({ space: 4 }) {
           Text(item.title)
-            .fontSize(16)
+            .fontSize(this.fontBody)
             .fontColor($r('app.color.text_primary'))
           if (item.desc.length > 0) {
             Text(item.desc)
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontColor($r('app.color.text_secondary'))
           }
         }
@@ -279,28 +278,25 @@ struct FilterSettingsPage {
         Row({ space: 8 }) {
           Column({ space: 4 }) {
             Text(item.title)
-              .fontSize(16)
+              .fontSize(this.fontBody)
               .fontColor($r('app.color.text_primary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
             if (item.desc.length > 0) {
               Text(item.desc)
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .fontColor($r('app.color.text_secondary'))
             }
           }
           .layoutWeight(1)
           .alignItems(HorizontalAlign.Start)
 
-          Image($r('app.media.ic_settings'))
-            .width(18)
-            .height(18)
-            .renderMode(ImageRenderMode.Template)
-            .fillColor($r('app.color.text_tertiary'))
-            .syncLoad(true)
+          SymbolGlyph($r('sys.symbol.gearshape'))
+            .fontSize(this.fontSubhead)
+            .fontColor([$r('app.color.text_tertiary')])
 
           Text('›')
-            .fontSize(16)
+            .fontSize(this.fontBody)
             .fontColor($r('app.color.text_tertiary'))
         }
         .layoutWeight(1)
@@ -329,10 +325,10 @@ struct FilterSettingsPage {
     Row({ space: 12 }) {
       Column({ space: 4 }) {
         Text('推荐算法')
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontColor($r('app.color.text_primary'))
         Text('选择首页推荐内容来源')
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
       }
       .layoutWeight(1)
@@ -340,10 +336,10 @@ struct FilterSettingsPage {
 
       Row({ space: 4 }) {
         Text(this.algoLabel())
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontColor($r('app.color.text_secondary'))
         Text('›')
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontColor($r('app.color.text_tertiary'))
       }
       .bindMenu(this.algoMenuBuilder)
@@ -357,10 +353,10 @@ struct FilterSettingsPage {
     Row({ space: 12 }) {
       Column({ space: 4 }) {
         Text('主题屏蔽阈值')
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontColor($r('app.color.text_primary'))
         Text('回答的问题包含 ≥ N 个被屏蔽主题时隐藏')
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
       }
       .layoutWeight(1)
@@ -368,10 +364,10 @@ struct FilterSettingsPage {
 
       Row({ space: 4 }) {
         Text(String(this.topicThreshold))
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontColor($r('app.color.text_secondary'))
         Text('›')
-          .fontSize(18)
+          .fontSize(this.fontSubhead)
           .fontColor($r('app.color.text_tertiary'))
       }
       .padding({ left: 14, right: 12, top: 8, bottom: 8 })
@@ -387,11 +383,11 @@ struct FilterSettingsPage {
     Column({ space: 0 }) {
       Row({ space: 12 }) {
         Text('管理屏蔽列表')
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontColor($r('app.color.text_primary'))
           .layoutWeight(1)
         Text('›')
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontColor($r('app.color.text_tertiary'))
       }
       .width('100%')
@@ -408,11 +404,11 @@ struct FilterSettingsPage {
   @Builder BlockHistoryRow() {
     Row({ space: 12 }) {
       Text('屏蔽记录')
-        .fontSize(16)
+        .fontSize(this.fontBody)
         .fontColor($r('app.color.text_primary'))
         .layoutWeight(1)
       Text('›')
-        .fontSize(16)
+        .fontSize(this.fontBody)
         .fontColor($r('app.color.text_tertiary'))
     }
     .width('100%')
@@ -421,21 +417,24 @@ struct FilterSettingsPage {
   }
 
   build() {
-    Column() {
+    Stack({ alignContent: Alignment.Top }) {
+      PageHeader({ title: '推荐系统与内容过滤' })
+        .zIndex(2)
+        .onAreaChange((_old: Area, newValue: Area) => {
+          if (newValue.height > 0) {
+            this.topBarHeight = Number(newValue.height);
+          }
+        })
+
       Scroll() {
         Column({ space: 16 }) {
-          this.Header('推荐系统与内容过滤')
           SettingsCard({ title: '推荐设置' }) {
             this.AlgoRow()
             ForEach(RECOMMEND_TOGGLES, (item: FilterToggleItem, idx: number) => {
-              if (item.key === FILTER_KEYS.qualityFilter) {
-                this.ToggleNavRow(item, 'pages/QualityFilterSettings', idx < RECOMMEND_TOGGLES.length - 1);
-              } else if (item.key === FILTER_KEYS.smartFilter) {
-                this.ToggleNavRow(item, 'pages/SmartFilterSettings', idx < RECOMMEND_TOGGLES.length - 1);
-              } else {
-                this.ToggleRow(item, idx < RECOMMEND_TOGGLES.length - 1);
-              }
+              this.ToggleRow(item, idx < RECOMMEND_TOGGLES.length - 1);
             })
+            this.GearNavRow('质量过滤', '按赞同数、关注数等指标过滤低质内容', 'pages/QualityFilterSettings', true)
+            this.GearNavRow('推荐次数过滤', '自动过滤展示超 N 次的内容', 'pages/SmartFilterSettings', false)
           }
 
           SettingsCard({ title: '内容屏蔽' }) {
@@ -457,14 +456,16 @@ struct FilterSettingsPage {
           }
 
           Text(`已累计屏蔽 ${this.blockCount} 条内容`)
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor($r('app.color.text_secondary'))
-            .padding({ left: 16, top: 4 })
+            .padding({ top: 4 })
         }
+        .width('100%')
         .padding({ left: 16, right: 16, top: 8, bottom: 32 })
       }
-      .layoutWeight(1)
       .width('100%')
+      .height('100%')
+      .padding({ top: this.topBarHeight })
     }
     .width('100%')
     .height('100%')

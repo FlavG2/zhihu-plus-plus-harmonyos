@@ -1,6 +1,7 @@
 import common from '@ohos.app.ability.common';
 import { router } from '@kit.ArkUI';
 import { VideoPlayService, QualityOption } from '../services/VideoPlayService';
+import { ThemeColors } from '../services/ThemeColors';
 
 const SPEED_OPTIONS: number[] = [0.5, 1.0, 1.25, 1.5, 2.0];
 
@@ -42,6 +43,12 @@ type RotateMode = 'auto' | 'portrait' | 'landscape';
 struct VideoPlayerPage {
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
   @StorageProp('bottomSafeAreaVp') private bottomSafeAreaVp: number = 0;
+  @StorageLink('oledBlack') private oledBlack: boolean = false;
+  @StorageLink('isDark') private isDark: boolean = false;
+  @StorageProp('fontMeta') fontMeta: string = '13fp';
+  @StorageProp('fontBody') fontBody: string = '16fp';
+  @StorageProp('fontBodySm') fontBodySm: string = '15fp';
+  @StorageProp('fontSecondary') fontSecondary: string = '14fp';
   @State private videoSrc: string = '';
   @State private loading: boolean = true;
   @State private errorMsg: string = '';
@@ -167,11 +174,11 @@ struct VideoPlayerPage {
   private FloatingButton(label: string, isActive: boolean, onTap: () => void): void {
     Stack() {
       Text(label)
-        .fontSize(13)
+        .fontSize(this.fontMeta)
         .fontWeight(FontWeight.Bold)
         .fontColor(isActive ? '#FFFFFF' : $r('app.color.text_primary'))
         .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-        .backgroundColor(isActive ? $r('app.color.action_text') : $r('app.color.action_pill_button_inactive'))
+        .backgroundColor(isActive ? $r('app.color.action_text') : ThemeColors.oledBlack(this.oledBlack, this.isDark, $r('app.color.action_pill_button_inactive')))
         .border({
           width: 1,
           color: isActive ? $r('app.color.action_text') : $r('app.color.card_border')
@@ -186,12 +193,12 @@ struct VideoPlayerPage {
       // 顶部栏（避开状态栏）
       Row() {
         Text('‹ 返回')
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontColor($r('app.color.action_text'))
           .onClick(() => this.onBack())
         if (this.title.length > 0) {
           Text(this.title)
-            .fontSize(15)
+            .fontSize(this.fontBodySm)
             .fontColor($r('app.color.text_primary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -208,7 +215,7 @@ struct VideoPlayerPage {
             .width(36)
             .height(36)
           Text('正在获取视频…')
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor($r('app.color.text_secondary'))
             .margin({ top: 12 })
         }
@@ -252,7 +259,7 @@ struct VideoPlayerPage {
             Column() {
               ForEach(SPEED_OPTIONS, (rate: number) => {
                 Text(rate === 1.0 ? '1.0x' : `${rate}x`)
-                  .fontSize(13)
+                  .fontSize(this.fontMeta)
                   .fontColor(this.currentSpeed === rate ? '#FFFFFF' : $r('app.color.text_primary'))
                   .padding({ left: 14, right: 14, top: 8, bottom: 8 })
                   .backgroundColor(this.currentSpeed === rate ? $r('app.color.action_text') : 'rgba(0,0,0,0)')
@@ -274,7 +281,7 @@ struct VideoPlayerPage {
             Column() {
               ForEach(this.qualities, (opt: QualityOption, index: number) => {
                 Text(opt.label)
-                  .fontSize(13)
+                  .fontSize(this.fontMeta)
                   .fontColor(this.currentQuality === index ? '#FFFFFF' : $r('app.color.text_primary'))
                   .padding({ left: 14, right: 14, top: 8, bottom: 8 })
                   .backgroundColor(this.currentQuality === index ? $r('app.color.action_text') : 'rgba(0,0,0,0)')
@@ -297,7 +304,7 @@ struct VideoPlayerPage {
       } else {
         Column() {
           Text(this.errorMsg.length > 0 ? this.errorMsg : '无法播放该视频')
-            .fontSize(14)
+            .fontSize(this.fontSecondary)
             .fontColor($r('app.color.text_secondary'))
             .textAlign(TextAlign.Center)
           Button('重试')

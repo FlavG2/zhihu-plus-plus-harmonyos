@@ -83,6 +83,8 @@ export interface HomeFeedItem {
   readonly questionFollowerCount?: number;
   // 推荐次数（客户端本地统计：同一内容被推荐出现的次数，用于卡片「第 N 次推荐」标记；运行时由计数层赋值，故非 readonly）
   recommendCount?: number;
+  // 质量过滤「屏蔽规则」模式下被打标的原因文案（如「规则：回答；赞数 < 10，未关注作者」）；存在时渲染「已屏蔽」占位卡
+  blockReason?: string;
 }
 
 export interface HomeFeedPaging {

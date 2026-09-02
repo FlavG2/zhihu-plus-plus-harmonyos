@@ -7,6 +7,7 @@ import { resolveZhihuContent } from '../services/ZhihuContentResolver';
 import { serializeZhihuContentTarget, ZhihuCommentableTarget } from '../models/ZhihuContentModels';
 import { HomeFeedItem } from '../models/ZhihuModels';
 import { ThemeColors } from '../services/ThemeColors';
+import { PageHeader } from '../components/PageHeader';
 
 @Entry
 @Component
@@ -25,6 +26,7 @@ struct HistoryPage {
   @StorageLink('oledBlack') oledBlack: boolean = false;
   @StorageLink('isDark') isDark: boolean = false;
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
+  @State topBarHeight: number = 0;
 
   private context(): common.Context {
     return getContext(this) as common.Context;
@@ -162,36 +164,48 @@ struct HistoryPage {
   }
 
   @Builder
-  private HistoryTabBar(): void {
-    Row({ space: 28 }) {
-      Column({ space: 4 }) {
-        Text('云端')
-          .fontSize(15)
-          .fontWeight(this.currentTab === 'cloud' ? FontWeight.Bold : FontWeight.Medium)
-          .fontColor(this.currentTab === 'cloud' ? $r('app.color.text_primary') : $r('app.color.text_secondary'))
-        if (this.currentTab === 'cloud') {
-          Divider().color($r('app.color.action_text')).strokeWidth(2).width(18)
-        }
-      }
-      .onClick(() => {
-        this.currentTab = 'cloud';
-      })
+  private HeaderTitleContent(): void {
+    Row() {
+      Text('历史')
+        .fontSize(18)
+        .fontWeight(FontWeight.Medium)
+        .fontColor($r('app.color.text_primary'))
+        .maxLines(1)
+        .margin({ right: 10 })
 
-      Column({ space: 4 }) {
+      Row({ space: 0 }) {
+        Text('云端')
+          .fontSize(13)
+          .fontWeight(this.currentTab === 'cloud' ? FontWeight.Bold : FontWeight.Normal)
+          .fontColor(this.currentTab === 'cloud' ? $r('app.color.text_primary') : $r('app.color.text_secondary'))
+          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .borderRadius({ topLeft: 12, bottomLeft: 12 })
+          .backgroundColor(this.currentTab === 'cloud'
+            ? (this.isDark ? '#1AFFFFFF' : '#0D000000')
+            : Color.Transparent)
+          .onClick(() => {
+            this.currentTab = 'cloud';
+          })
         Text('本地')
-          .fontSize(15)
-          .fontWeight(this.currentTab === 'local' ? FontWeight.Bold : FontWeight.Medium)
+          .fontSize(13)
+          .fontWeight(this.currentTab === 'local' ? FontWeight.Bold : FontWeight.Normal)
           .fontColor(this.currentTab === 'local' ? $r('app.color.text_primary') : $r('app.color.text_secondary'))
-        if (this.currentTab === 'local') {
-          Divider().color($r('app.color.action_text')).strokeWidth(2).width(18)
-        }
+          .padding({ left: 10, right: 10, top: 5, bottom: 5 })
+          .borderRadius({ topRight: 12, bottomRight: 12 })
+          .backgroundColor(this.currentTab === 'local'
+            ? (this.isDark ? '#1AFFFFFF' : '#0D000000')
+            : Color.Transparent)
+          .onClick(() => {
+            this.currentTab = 'local';
+          })
       }
-      .onClick(() => {
-        this.currentTab = 'local';
-      })
+      .backgroundColor(this.isDark ? '#0DFFFFFF' : '#08000000')
+      .borderRadius(12)
+      .layoutWeight(1)
+      .justifyContent(FlexAlign.Center)
     }
     .width('100%')
-    .padding({ left: 24, right: 24, top: 4, bottom: 6 })
+    .alignItems(VerticalAlign.Center)
   }
 
   @Builder
@@ -518,81 +532,24 @@ struct HistoryPage {
   }
 
   build() {
-    Stack() {
-      Column() {
-      // ---- 顶部标题行：[‹] 浏览历史 ............ [刷新] [清空] ----
-      Row({ space: 10 }) {
-        Text('‹')
-          .fontSize(28)
-          .fontColor($r('app.color.text_primary'))
-          .onClick(() => {
-            router.back({ url: '' });
-          })
-          .padding({ left: 8, right: 4 })
-
-        Text('浏览历史')
-          .fontSize(20)
-          .fontWeight(FontWeight.Bold)
-          .fontColor($r('app.color.text_primary'))
-          .layoutWeight(1)
-
-        if (!this.refreshing) {
-          Text('刷新')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.action_text'))
-            .padding({ left: 14, right: 14, top: 8, bottom: 8 })
-            .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-            .border({ width: 1, color: $r('app.color.card_border') })
-            .borderRadius(16)
-            .onClick(() => {
-              if (this.currentTab === 'cloud') {
-                this.refreshAll();
-              } else {
-                this.loadHistoryItems();
-                this.refreshing = false;
-              }
-            })
-        } else {
-          LoadingProgress()
-            .width(18)
-            .height(18)
-            .margin({ right: 8 })
-        }
-
-        if ((this.currentTab === 'cloud' ? this.cloudHistoryItems.length > 0 : this.historyItems.length > 0)) {
-          Text('清空')
-            .fontSize(14)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_secondary'))
-            .padding({ left: 14, right: 14, top: 8, bottom: 8 })
-            .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-            .border({ width: 1, color: $r('app.color.card_border') })
-            .borderRadius(16)
-            .onClick(() => {
-              this.showClearConfirm = true;
-            })
-        }
-      }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
-      .padding({ left: 24, right: 24, top: this.topSafeAreaVp + 12, bottom: 8 })
-
-      // ---- Tab 栏 ----
-      this.HistoryTabBar()
-
-      // ---- 提示行（按 Tab 说明清空/删除影响，切勿误删云端）----
-      Text(this.historyHint)
-        .fontSize(12)
-        .lineHeight(18)
-        .fontColor($r('app.color.text_secondary'))
-        .width('100%')
-        .padding({ left: 24, right: 24, top: 2, bottom: 6 })
-
-      // ---- 内容区（下拉刷新）----
+    Stack({ alignContent: Alignment.Top }) {
+      // ===== 内容层：Refresh 直接占满 Stack，首元素是顶栏让位占位条，
+      // 滚动时内容钻到顶栏底下，PageHeader 的 backdropBlur 才能糊到东西 =====
       Refresh({ refreshing: $$this.refreshing }) {
         Scroll() {
           Column({ space: 8 }) {
+            // 顶部让位占位（同通知页写法）：高度 = 顶栏实测高
+            Column()
+              .width('100%')
+              .height(this.topBarHeight)
+
+            // 提示行（跟随滚动）
+            Text(this.historyHint)
+              .fontSize(12)
+              .lineHeight(18)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+
             this.HistoryListContent()
 
             Column()
@@ -604,73 +561,108 @@ struct HistoryPage {
           .alignItems(HorizontalAlign.Start)
           .padding({ left: 24, right: 24, top: 8, bottom: 8 })
         }
-        .layoutWeight(1)
+        .height('100%')
         .scrollBar(BarState.Off)
-      }
-      .onRefreshing(() => {
-        this.onHistoryRefresh();
-      })
-      .layoutWeight(1)
-      .width('100%')
-    }
-    .width('100%')
-    .height('100%')
-
-    if (this.showClearConfirm) {
-      Column() {
-        Column({ space: 16 }) {
-          Text(this.currentTab === 'cloud' ? '清空云端浏览记录' : '清空本地浏览记录')
-            .fontSize(17)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-            .width('100%')
-            .textAlign(TextAlign.Start)
-          Text(this.currentTab === 'cloud'
-            ? '确定要清空所有云端浏览记录吗？此操作不可恢复，将同步删除知乎服务器上的记录。'
-            : '确定要清空所有本地浏览记录吗？此操作不可恢复。')
-            .fontSize(14)
-            .lineHeight(20)
-            .fontColor($r('app.color.text_secondary'))
-            .width('100%')
-          Row({ space: 12 }) {
-            Button('取消')
-              .layoutWeight(1)
-              .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-              .fontColor($r('app.color.text_primary'))
-              .onClick(() => {
-                this.showClearConfirm = false;
-              })
-            Button('确认清空')
-              .layoutWeight(1)
-              .backgroundColor($r('app.color.action_text'))
-              .fontColor('#FFFFFFFF')
-              .onClick(() => {
-                this.showClearConfirm = false;
-                this.clearHistoryItems();
-              })
-          }
-          .width('100%')
-          .margin({ top: 18 })
-        }
-        .width('86%')
-        .padding(20)
-        .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-        .border({ width: 1, color: $r('app.color.card_border') })
-        .borderRadius(16)
       }
       .width('100%')
       .height('100%')
-      .backgroundColor('#80000000')
-      .justifyContent(FlexAlign.Center)
-      .onClick(() => {
-        this.showClearConfirm = false;
+      .onRefreshing(() => {
+        this.onHistoryRefresh();
       })
-    }
 
+      // ===== 浮层顶栏：[‹] 历史  [云端|本地居中]  (刷新)(清空) =====
+      PageHeader({
+        titleSlot: () => {
+          this.HeaderTitleContent()
+        },
+        rightButtons: [
+          {
+            icon: $r('sys.symbol.arrow_clockwise'),
+            action: () => {
+              if (!this.refreshing) {
+                if (this.currentTab === 'cloud') {
+                  this.refreshAll();
+                } else {
+                  this.loadHistoryItems();
+                  this.refreshing = false;
+                }
+              }
+            }
+          },
+          {
+            icon: $r('sys.symbol.trash'),
+            action: () => {
+              const hasItems = this.currentTab === 'cloud'
+                ? this.cloudHistoryItems.length > 0
+                : this.historyItems.length > 0;
+              if (hasItems) {
+                this.showClearConfirm = true;
+              }
+            }
+          }
+        ]
+      })
+      .zIndex(2)
+      .onAreaChange((_old: Area, newValue: Area) => {
+        if (newValue.height > 0 && Number(newValue.height) !== this.topBarHeight) {
+          this.topBarHeight = Number(newValue.height);
+        }
+      })
+
+      // ===== 清空确认弹窗 =====
+      if (this.showClearConfirm) {
+        Column() {
+          Column({ space: 16 }) {
+            Text(this.currentTab === 'cloud' ? '清空云端浏览记录' : '清空本地浏览记录')
+              .fontSize(17)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('app.color.text_primary'))
+              .width('100%')
+              .textAlign(TextAlign.Start)
+            Text(this.currentTab === 'cloud'
+              ? '确定要清空所有云端浏览记录吗？此操作不可恢复，将同步删除知乎服务器上的记录。'
+              : '确定要清空所有本地浏览记录吗？此操作不可恢复。')
+              .fontSize(14)
+              .lineHeight(20)
+              .fontColor($r('app.color.text_secondary'))
+              .width('100%')
+            Row({ space: 12 }) {
+              Button('取消')
+                .layoutWeight(1)
+                .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+                .fontColor($r('app.color.text_primary'))
+                .onClick(() => {
+                  this.showClearConfirm = false;
+                })
+              Button('确认清空')
+                .layoutWeight(1)
+                .backgroundColor($r('app.color.action_text'))
+                .fontColor('#FFFFFFFF')
+                .onClick(() => {
+                  this.showClearConfirm = false;
+                  this.clearHistoryItems();
+                })
+            }
+            .width('100%')
+            .margin({ top: 18 })
+          }
+          .width('86%')
+          .padding(20)
+          .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+          .border({ width: 1, color: $r('app.color.card_border') })
+          .borderRadius(16)
+        }
+        .width('100%')
+        .height('100%')
+        .backgroundColor('#80000000')
+        .justifyContent(FlexAlign.Center)
+        .onClick(() => {
+          this.showClearConfirm = false;
+        })
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
-  .width('100%')
-  .height('100%')
-  .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
-  .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
-}
 }

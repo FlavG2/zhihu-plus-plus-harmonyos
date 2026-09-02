@@ -38,15 +38,35 @@ export class FeedFilterService {
     }
   }
 
-  private static qualityThresholds(context: common.Context): QualityThresholds {
+  // 质量过滤阈值：未关注 / 已关注 各自独立一套（默认 0 = 不触发过滤）
+  private static qualityThresholdsFor(context: common.Context, followed: boolean): QualityThresholds {
+    const k = followed
+      ? {
+          vote: FILTER_KEYS.qualityVoteFollowed,
+          videoFan: FILTER_KEYS.qualityVideoFanFollowed,
+          videoVote: FILTER_KEYS.qualityVideoVoteFollowed,
+          articleFan: FILTER_KEYS.qualityArticleFanFollowed,
+          articleVote: FILTER_KEYS.qualityArticleVoteFollowed,
+          questionAnswer: FILTER_KEYS.qualityQuestionAnswerFollowed,
+          questionFollower: FILTER_KEYS.qualityQuestionFollowerFollowed,
+        }
+      : {
+          vote: FILTER_KEYS.qualityVoteUnfollowed,
+          videoFan: FILTER_KEYS.qualityVideoFanUnfollowed,
+          videoVote: FILTER_KEYS.qualityVideoVoteUnfollowed,
+          articleFan: FILTER_KEYS.qualityArticleFanUnfollowed,
+          articleVote: FILTER_KEYS.qualityArticleVoteUnfollowed,
+          questionAnswer: FILTER_KEYS.qualityQuestionAnswerUnfollowed,
+          questionFollower: FILTER_KEYS.qualityQuestionFollowerUnfollowed,
+        };
     return {
-      vote: FilterSettingsRepository.getInt(context, FILTER_KEYS.qualityVote, 10),
-      videoFan: FilterSettingsRepository.getInt(context, FILTER_KEYS.qualityVideoFan, 50),
-      videoVote: FilterSettingsRepository.getInt(context, FILTER_KEYS.qualityVideoVote, 20),
-      articleFan: FilterSettingsRepository.getInt(context, FILTER_KEYS.qualityArticleFan, 50),
-      articleVote: FilterSettingsRepository.getInt(context, FILTER_KEYS.qualityArticleVote, 20),
-      questionAnswer: FilterSettingsRepository.getInt(context, FILTER_KEYS.qualityQuestionAnswer, 5),
-      questionFollower: FilterSettingsRepository.getInt(context, FILTER_KEYS.qualityQuestionFollower, 50)
+      vote: FilterSettingsRepository.getInt(context, k.vote, 0),
+      videoFan: FilterSettingsRepository.getInt(context, k.videoFan, 0),
+      videoVote: FilterSettingsRepository.getInt(context, k.videoVote, 0),
+      articleFan: FilterSettingsRepository.getInt(context, k.articleFan, 0),
+      articleVote: FilterSettingsRepository.getInt(context, k.articleVote, 0),
+      questionAnswer: FilterSettingsRepository.getInt(context, k.questionAnswer, 0),
+      questionFollower: FilterSettingsRepository.getInt(context, k.questionFollower, 0)
     };
   }
 
@@ -70,6 +90,23 @@ export class FeedFilterService {
         return false;
       default:
         return false;
+    }
+  }
+
+  // 质量过滤「屏蔽规则」模式下的原因文案（对齐安卓 Feed.kt filterReason）。
+  private static qualityReason(item: HomeFeedItem, th: QualityThresholds, followed: boolean): string {
+    const who = followed ? '，已关注作者' : '，未关注作者';
+    switch (item.type) {
+      case 'answer':
+        return `规则：回答；赞数 < ${th.vote}${who}`;
+      case 'article':
+        return `规则：文章；作者粉丝数 < ${th.articleFan} 或 文章赞数 < ${th.articleVote}${who}`;
+      case 'zvideo':
+        return `规则：所有视频${who}`;
+      case 'question':
+        return `规则：问题；回答数 < ${th.questionAnswer}，关注数 < ${th.questionFollower}${who}`;
+      default:
+        return `规则：低质内容${who}`;
     }
   }
 
@@ -108,59 +145,13 @@ export class FeedFilterService {
     }
   }
 
-  // 推荐次数记录（独立于过滤开关）：key=item.id，value=被推荐出现次数。
-  private static loadRecommendRecords(context: common.Context): Record<string, number> {
-    try {
-      const raw = FilterSettingsRepository.getStr(context, FILTER_KEYS.recommendRecords, '');
-      if (raw.length === 0) {
-        return {};
-      }
-      const parsed = JSON.parse(raw) as Record<string, number>;
-      const out: Record<string, number> = {};
-      for (const k of Object.keys(parsed)) {
-        const v = parsed[k];
-        if (typeof v === 'number') {
-          out[k] = v;
-        }
-      }
-      return out;
-    } catch (_e) {
-      return {};
-    }
-  }
-
-  private static saveRecommendRecords(context: common.Context, records: Record<string, number>): void {
-    try {
-      FilterSettingsRepository.setStr(context, FILTER_KEYS.recommendRecords, JSON.stringify(records));
-    } catch (_e) {
-      // 忽略持久化失败
-    }
-  }
-
-  // 推荐次数统计：每次「新一批内容加载」时调用（不受任何过滤开关影响）。
-  // 对每条 item 自增并赋给 item.recommendCount，持久化到 recommendRecords。
-  static recordRecommendCounts(context: common.Context, items: HomeFeedItem[]): void {
-    const records = this.loadRecommendRecords(context);
-    let dirty = false;
-    for (const item of items) {
-      if (!item.id) {
-        continue;
-      }
-      const next = (records[item.id] ?? 0) + 1;
-      records[item.id] = next;
-      item.recommendCount = next;
-      dirty = true;
-    }
-    if (dirty) {
-      this.saveRecommendRecords(context, records);
-    }
-  }
-
   // 推荐页精确过滤（受「启用关键词/用户/主题屏蔽」开关控制）。仅推荐页调用，关注页不受影响。
   // 管道顺序（鸿蒙端定）：精确匹配（关键词/用户/话题/广告/学堂/微信/盐选）
-  //   → 质量过滤（含「已关注作者豁免」）
-  //   → 智能过滤（低质检测 + 浏览记录阈值，保留的 item 记录浏览）
-  static filterHomeFeed(context: common.Context, items: HomeFeedItem[]): HomeFeedItem[] {
+  //   → 质量过滤（未关注 / 已关注 各自独立模式与阈值）
+  //   → 智能过滤（低质检测 + 浏览记录阈值，未关注 / 已关注 各自独立模式）
+  // recordCount=true 时（首屏 / 加载更多）对展示中的内容自增统一计数；
+  // 该计数同时驱动「推荐次数角标」与「展示 N 次后屏蔽」，并随浏览记录过期而清零。
+  static filterHomeFeed(context: common.Context, items: HomeFeedItem[], recordCount: boolean = false): HomeFeedItem[] {
     const keywordOn = FilterSettingsRepository.getBool(context, FILTER_KEYS.keywordBlock, true);
     const userOn = FilterSettingsRepository.getBool(context, FILTER_KEYS.userBlock, true);
     const topicOn = FilterSettingsRepository.getBool(context, FILTER_KEYS.topicBlock, true);
@@ -170,35 +161,27 @@ export class FeedFilterService {
     const blockYanxuan = FilterSettingsRepository.getBool(context, FILTER_KEYS.blockYanxuan, true);
     const blockAd = FilterSettingsRepository.getBool(context, FILTER_KEYS.blockAd, true);
 
-    // 质量 / 智能 / 过滤已关注 总开关
-    const qualityOn = FilterSettingsRepository.getBool(context, FILTER_KEYS.qualityFilter, true);
-    const smartOn = FilterSettingsRepository.getBool(context, FILTER_KEYS.smartFilter, true);
-    const filterFollowedOn = FilterSettingsRepository.getBool(context, FILTER_KEYS.filterFollowed, false);
-    const th = this.qualityThresholds(context);
-
-    // 智能过滤：浏览记录（仅在 smartOn 时加载/保存）
+    // 浏览记录（带过期清理，未关注 / 已关注 两套模式共用同一份 smartViewRecords）
     let records: Record<string, ViewRecord> = {};
     let now = 0;
-    let smartViewThreshold = 2;
-    let smartLowQuality = true;
     let dirty = false;
-    if (smartOn) {
-      records = this.loadViewRecords(context);
-      now = Date.now();
+    {
       const expireDays = FilterSettingsRepository.getInt(context, FILTER_KEYS.smartExpireDays, 7);
       const maxRecords = FilterSettingsRepository.getInt(context, FILTER_KEYS.smartMaxRecords, 10000);
       const expireMs = expireDays * 24 * 60 * 60 * 1000;
-      let entries = Object.entries(records).filter(([, v]) => (now - v.lastSeen) < expireMs);
+      now = Date.now();
+      const loaded = this.loadViewRecords(context);
+      let entries = Object.entries(loaded).filter(([, v]) => (now - v.lastSeen) < expireMs);
       if (entries.length > maxRecords) {
         // 超过最大记录数 → 全量清理（对齐安卓上限策略）
         entries = [];
       }
-      records = {};
       for (const [k, v] of entries) {
         records[k] = v;
       }
-      smartViewThreshold = FilterSettingsRepository.getInt(context, FILTER_KEYS.smartViewThreshold, 2);
-      smartLowQuality = FilterSettingsRepository.getBool(context, FILTER_KEYS.smartLowQuality, true);
+      if (Object.keys(loaded).length !== Object.keys(records).length) {
+        dirty = true; // 有过期项被清理，稍后落盘
+      }
     }
 
     const keywords = keywordOn ? BlocklistRepository.getKeywords(context) : [];
@@ -263,32 +246,62 @@ export class FeedFilterService {
         return false;
       }
 
-      // 已关注且「过滤已关注」关闭 → 豁免（问题类型无豁免，安卓问题质量过滤无视 isFollowing）
       const followed = item.authorFollowing === true;
-      const exempt = !filterFollowedOn && followed && item.type !== 'question';
+      const id: string = item.id ?? '';
 
-      // 质量过滤（含关注豁免）
-      if (qualityOn && !exempt && this.qualityBlocked(item, th)) {
-        return false;
+      // 质量过滤（未关注 / 已关注 各自独立）：仅 off 之外的模式生效，
+      // hide 整条移除，rules 打标占位卡（仍可点开，对齐安卓 RULES 占位卡）
+      const qMode = FilterSettingsRepository.getQualityMode(context, followed);
+      if (qMode !== 'off') {
+        const qTh = this.qualityThresholdsFor(context, followed);
+        if (this.qualityBlocked(item, qTh)) {
+          if (qMode === 'hide') {
+            return false;
+          }
+          item.blockReason = this.qualityReason(item, qTh, followed);
+        }
       }
 
-      // 智能过滤（低质检测 + 浏览记录阈值），保留的 item 记录浏览
-      if (smartOn && !exempt) {
-        if (smartLowQuality && this.isLowQuality(item)) {
+      // 推荐次数统一计数 + 智能过滤（未关注 / 已关注 各自独立）：
+      // 计数同时驱动「推荐次数角标」与「展示 N 次后屏蔽」，随浏览记录过期清零。
+      const seen = id.length > 0 ? (records[id]?.count ?? 0) : 0;
+      const sMode = FilterSettingsRepository.getSmartMode(context, followed);
+      let blocked = false;
+      let blockReason = '';
+      if (sMode !== 'off') {
+        const sTh = followed
+          ? FilterSettingsRepository.getInt(context, FILTER_KEYS.smartViewThresholdFollowed, 2)
+          : FilterSettingsRepository.getInt(context, FILTER_KEYS.smartViewThresholdUnfollowed, 2);
+        const sLow = followed
+          ? FilterSettingsRepository.getBool(context, FILTER_KEYS.smartLowQualityFollowed, true)
+          : FilterSettingsRepository.getBool(context, FILTER_KEYS.smartLowQualityUnfollowed, true);
+        if (sLow && this.isLowQuality(item)) {
+          blocked = true;
+          blockReason = '规则：低质推广内容';
+        } else if (seen >= sTh) {
+          blocked = true;
+          blockReason = `规则：已展示 ${seen} 次，超过阈值 ${sTh}`;
+        }
+      }
+
+      if (blocked) {
+        if (sMode === 'hide') {
           return false;
         }
-        const seen = records[item.id]?.count ?? 0;
-        if (seen >= smartViewThreshold) {
-          return false;
-        }
-        records[item.id] = { count: seen + 1, lastSeen: now };
+        item.blockReason = blockReason + (followed ? '，已关注作者' : '，未关注作者');
+        item.recommendCount = seen;
+      } else if (recordCount && id.length > 0) {
+        records[id] = { count: seen + 1, lastSeen: now };
         dirty = true;
+        item.recommendCount = seen + 1;
+      } else {
+        item.recommendCount = seen;
       }
 
       return true;
     });
 
-    if (smartOn && dirty) {
+    if (dirty) {
       this.saveViewRecords(context, records);
     }
     return result;

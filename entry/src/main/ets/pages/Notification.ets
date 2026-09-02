@@ -5,10 +5,23 @@ import { ZhihuNotification, ZhihuNotificationCategory, ZhihuNotificationInvitati
 import { resolveZhihuContent, resolveNotificationEntryUrl } from '../services/ZhihuContentResolver';
 import { serializeZhihuContentTarget, ZhihuCommentableTarget } from '../models/ZhihuContentModels';
 import { ThemeColors } from '../services/ThemeColors';
+import { PageHeader } from '../components/PageHeader';
 
 @Entry
 @Component
 struct NotificationPage {
+  // 软尺寸：由 DesignMetrics 按「官方基线 × 用户倍率」算出后写入 AppStorage，
+  // 默认值与迁移前完全一致，故视觉零变化；用户调整字号/密度后本页自动重排。
+  @StorageProp('fontSymbol') private fontSymbol: string = '24fp';
+  @StorageProp('fontBadge') private fontBadge: string = '10fp';
+  @StorageProp('fontCaption') private fontCaption: string = '12fp';
+  @StorageProp('fontMeta') private fontMeta: string = '13fp';
+  @StorageProp('fontSecondary') private fontSecondary: string = '14fp';
+  @StorageProp('fontBody') private fontBody: string = '16fp';
+  @StorageProp('fontSubhead') private fontSubhead: string = '18fp';
+  @StorageProp('fontHeading') private fontHeading: string = '20fp';
+  @StorageProp('cardPadding') private cardPadding: number = 16;
+
   @State private categories: ZhihuNotificationCategory[] = NOTIFICATION_CATEGORIES;
   @State private items: ZhihuNotification[] = [];
   @State private nextUrl: string = '';
@@ -21,6 +34,7 @@ struct NotificationPage {
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
   @StorageLink('oledBlack') private oledBlack: boolean = false;
   @StorageLink('isDark') private isDark: boolean = false;
+  @State private topBarHeight: number = 0;
 
   private context(): common.Context {
     return getContext(this) as common.Context;
@@ -28,6 +42,13 @@ struct NotificationPage {
 
   aboutToAppear(): void {
     this.loadOverview(true);
+  }
+
+  onPageShow(): void {
+    // 用户从分类/详情页返回通知首页时，重新拉取 overview，让「未读数」等状态及时刷新（退回首页也会同步）
+    if (!this.loading) {
+      this.loadOverview(true);
+    }
   }
 
   private get totalUnread(): number {
@@ -45,12 +66,14 @@ struct NotificationPage {
         this.context(),
         reset ? undefined : this.nextUrl
       );
+      // 对齐安卓：通知列表直接用服务端返回顺序（不在客户端重排）
+      const sorted = page.items.slice();
       if (reset) {
-        this.items = page.items;
+        this.items = sorted;
         this.invitation = page.invitation;
         this.unreadCounts = page.unreadCounts;
       } else {
-        this.items = this.items.concat(page.items);
+        this.items = this.items.concat(sorted);
       }
       this.nextUrl = page.nextUrl;
       this.isEnd = page.isEnd;
@@ -211,7 +234,7 @@ struct NotificationPage {
         url: 'pages/PrivateMessage',
         params: {
           peerId: resolvedTarget.peerId,
-          name: resolvedTarget.name ?? '',
+          name: (resolvedTarget.name ?? '').length > 0 ? resolvedTarget.name : item.title,
           avatarUrl: item.avatarUrl
         }
       });
@@ -259,123 +282,134 @@ struct NotificationPage {
   }
 
   build() {
-    List() {
-      // ---- 顶部标题栏：[‹] 消息 ............ [全部已读] [设置] ----
-      ListItem() {
-        Row() {
-          Text('‹')
-            .fontSize(26)
-            .fontColor($r('app.color.text_primary'))
-            .onClick(() => {
-              router.back({ url: '' });
-            })
-            .padding({ left: 8, right: 4 })
-
-          Text('消息')
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-            .layoutWeight(1)
-
-          if (this.totalUnread > 0) {
-            Text(this.markingRead ? '已读中...' : '全部已读')
-              .fontSize(14)
-              .fontColor($r('app.color.action_text'))
-              .onClick(() => this.markAllRead())
-              .padding({ left: 8, right: 8 })
-          }
-
-          Text('设置')
-            .fontSize(14)
-            .fontColor($r('app.color.text_secondary'))
-            .onClick(() => {
-              router.pushUrl({ url: 'pages/NotificationSettings' });
-            })
-            .padding({ left: 8, right: 8 })
+    Stack({ alignContent: Alignment.Top }) {
+      // ---- 浮层顶栏：PageHeader（自带返回键 + 玻璃模糊背景）----
+      // 全部已读（仅有未读时）+ 设置，换成图标按钮，与其他页面统一
+      PageHeader({
+        title: '通知',
+        rightButtons: this.totalUnread > 0
+          ? [
+              {
+                icon: $r('sys.symbol.checkmark_circle'),
+                action: () => {
+                  this.markAllRead();
+                }
+              },
+              {
+                icon: $r('sys.symbol.gearshape'),
+                action: () => {
+                  router.pushUrl({ url: 'pages/NotificationSettings' });
+                }
+              }
+            ]
+          : [
+              {
+                icon: $r('sys.symbol.gearshape'),
+                action: () => {
+                  router.pushUrl({ url: 'pages/NotificationSettings' });
+                }
+              }
+            ]
+      })
+      .zIndex(2)
+      .onAreaChange((_old: Area, newValue: Area) => {
+        if (newValue.height > 0) {
+          this.topBarHeight = Number(newValue.height);
         }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-        .padding({ left: 8, right: 8, top: this.topSafeAreaVp + 12, bottom: 12 })
-      }
+      })
 
-      // ---- 分类图标栏（4 个，对齐安卓 NotificationCategoryRow）→ 点击跳转分类详情页 ----
-      ListItem() {
-        Row() {
-          ForEach(this.categories, (cat: ZhihuNotificationCategory, idx: number) => {
-            this.CategoryButton(cat, idx);
-          }, (cat: ZhihuNotificationCategory) => cat.key)
-        }
-        .width('100%')
-        .padding({ left: 8, right: 8, top: 8, bottom: 12 })
-        .justifyContent(FlexAlign.SpaceEvenly)
-      }
-
-      // ---- 邀请回答入口（对齐安卓 NotificationInvitationRow：写死始终渲染，column_head 为空也显示，内部走兜底）----
-      ListItem() {
-        this.InvitationEntry(this.invitation);
-      }
-
-      // ---- 「通知」分组标题行（安卓消息列表上方分隔）----
-      ListItem() {
-        Row() {
-          Text('通知')
-            .fontSize(13)
-            .fontWeight(FontWeight.Medium)
-            .fontColor($r('app.color.text_secondary'))
-            .margin({ left: 16, right: 8 })
-        }
-        .width('100%')
-        .padding({ top: 8, bottom: 4 })
-        .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
-      }
-
-      ListItem() {
-        Divider()
-          .color($r('app.color.card_border'))
-          .width('100%')
-      }
-
-      // ---- 来源会话列表（对齐安卓 NotificationConversationRow）----
-      if (this.error.length > 0) {
+      // ---- 可滚动内容区（顶栏下面的全部，跟随滑动消失）----
+      List() {
+        // 顶部让位，高度 = 固定顶栏高度
         ListItem() {
-          Column() {
-            Text(this.error)
-              .fontSize(14)
-              .fontColor($r('app.color.text_secondary'))
-            Button('重试')
-              .margin({ top: 12 })
-              .onClick(() => this.loadOverview(true))
+          Column()
+            .width('100%')
+            .height(this.topBarHeight)
+        }
+
+        // ---- 分类图标栏（4 个，对齐安卓 NotificationCategoryRow）→ 点击跳转分类详情页 ----
+        ListItem() {
+          Row() {
+            ForEach(this.categories, (cat: ZhihuNotificationCategory, idx: number) => {
+              this.CategoryButton(cat, idx);
+            }, (cat: ZhihuNotificationCategory) => cat.key)
           }
           .width('100%')
-          .padding({ top: 80, bottom: 80 })
-          .alignItems(HorizontalAlign.Center)
+          .padding({ left: 8, right: 8, top: 8, bottom: 12 })
+          .justifyContent(FlexAlign.SpaceEvenly)
         }
-      } else {
-        ForEach(this.items, (item: ZhihuNotification) => {
-          ListItem() {
-            this.ConversationRow(item);
-          }
-          .onClick(() => this.openNotification(item))
-        }, (item: ZhihuNotification) => item.id)
 
-        if (this.loading) {
+        // ---- 邀请回答入口（对齐安卓 NotificationInvitationRow：写死始终渲染，column_head 为空也显示，内部走兜底）----
+        ListItem() {
+          this.InvitationEntry(this.invitation);
+        }
+
+        // ---- 「通知」分组标题行（安卓消息列表上方分隔）----
+        ListItem() {
+          Row() {
+            Text('通知')
+              .fontSize(this.fontMeta)
+              .fontWeight(FontWeight.Medium)
+              .fontColor($r('app.color.text_secondary'))
+              .margin({ left: 16, right: 8 })
+          }
+          .width('100%')
+          .padding({ top: 8, bottom: 4 })
+          .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+        }
+
+        ListItem() {
+          Divider()
+            .color($r('app.color.card_border'))
+            .width('100%')
+        }
+
+        // ---- 来源会话列表（对齐安卓 NotificationConversationRow）----
+        if (this.error.length > 0) {
           ListItem() {
-            Row() {
-              Text('加载中...')
-                .fontSize(13)
+            Column() {
+              Text(this.error)
+                .fontSize(this.fontSecondary)
                 .fontColor($r('app.color.text_secondary'))
+              Button('重试')
+                .margin({ top: 12 })
+                .onClick(() => this.loadOverview(true))
             }
             .width('100%')
-            .justifyContent(FlexAlign.Center)
-            .padding(16)
+            .padding({ top: 80, bottom: 80 })
+            .alignItems(HorizontalAlign.Center)
+          }
+        } else {
+          ForEach(this.items, (item: ZhihuNotification) => {
+            ListItem() {
+              this.ConversationRow(item);
+            }
+            .onClick(() => this.openNotification(item))
+          }, (item: ZhihuNotification) => item.id)
+
+          if (this.loading) {
+            ListItem() {
+              Row() {
+                Text('加载中...')
+                  .fontSize(this.fontMeta)
+                  .fontColor($r('app.color.text_secondary'))
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Center)
+              .padding(this.cardPadding)
+            }
           }
         }
       }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+      .onReachEnd(() => this.loadMore())
     }
     .width('100%')
     .height('100%')
     .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
-    .onReachEnd(() => this.loadMore())
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
   }
 
   @Builder
@@ -383,11 +417,9 @@ struct NotificationPage {
     Column() {
       Stack({ alignContent: Alignment.TopEnd }) {
         Column() {
-          Image(cat.icon)
-            .width(28)
-            .height(28)
-            .renderMode(ImageRenderMode.Template)
-            .fillColor($r('app.color.text_primary'))
+          SymbolGlyph(cat.icon)
+            .fontSize(28)
+            .fontColor([$r('app.color.text_primary')])
         }
         .width(48)
         .height(48)
@@ -398,7 +430,7 @@ struct NotificationPage {
 
         if (this.unreadOf(cat.key) > 0) {
           Text(this.formatUnread(this.unreadOf(cat.key)))
-            .fontSize(10)
+            .fontSize(this.fontBadge)
             .fontWeight(FontWeight.Bold)
             .fontColor('#FFFFFF')
             .backgroundColor('#ff4d4f')
@@ -411,7 +443,7 @@ struct NotificationPage {
       .height(56)
 
       Text(cat.title)
-        .fontSize(12)
+        .fontSize(this.fontCaption)
         .fontColor($r('app.color.text_primary'))
         .margin({ top: 6 })
         .maxLines(1)
@@ -436,7 +468,7 @@ struct NotificationPage {
       } else {
         Column() {
           Text('🔔')
-            .fontSize(20)
+            .fontSize(this.fontHeading)
             .fontColor($r('app.color.text_primary'))
         }
         .width(44)
@@ -451,7 +483,7 @@ struct NotificationPage {
       Column() {
         Row() {
           Text(item.title)
-            .fontSize(16)
+            .fontSize(this.fontBody)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
             .maxLines(1)
@@ -460,7 +492,7 @@ struct NotificationPage {
 
           if (item.unreadCount > 0) {
             Text(this.formatUnread(item.unreadCount))
-              .fontSize(10)
+              .fontSize(this.fontBadge)
               .fontWeight(FontWeight.Bold)
               .fontColor('#FFFFFF')
               .backgroundColor('#ff4d4f')
@@ -469,7 +501,7 @@ struct NotificationPage {
               .margin({ left: 8 })
           } else if (this.formatTime(item.createdTime).length > 0) {
             Text(this.formatTime(item.createdTime))
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontColor($r('app.color.text_tertiary'))
               .margin({ left: 8 })
           }
@@ -479,7 +511,7 @@ struct NotificationPage {
 
         if (item.subtitle.length > 0) {
           Text(item.subtitle)
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor($r('app.color.text_secondary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -487,7 +519,7 @@ struct NotificationPage {
             .margin({ top: 3 })
         } else if (item.body.length > 0) {
           Text(item.body)
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor($r('app.color.text_secondary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -509,10 +541,16 @@ struct NotificationPage {
   private InvitationEntry(inv: ZhihuNotificationInvitation | undefined) {
     Row() {
       Column() {
-        Image((inv !== undefined && inv.avatarUrl.length > 0) ? inv.avatarUrl : $r('app.media.nav_follow'))
-          .width(28)
-          .height(28)
-          .fillColor($r('app.color.action_text'))
+        if (inv !== undefined && inv.avatarUrl.length > 0) {
+          Image(inv.avatarUrl)
+            .width(28)
+            .height(28)
+            .fillColor($r('app.color.action_text'))
+        } else {
+          SymbolGlyph($r('sys.symbol.envelope_open_fill'))
+            .fontSize(28)
+            .fontColor([$r('app.color.action_text')])
+        }
       }
       .width(52)
       .height(52)
@@ -524,7 +562,7 @@ struct NotificationPage {
 
       Column() {
         Text((inv !== undefined && inv.title.length > 0) ? inv.title : '邀请回答')
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .maxLines(1)
@@ -533,7 +571,7 @@ struct NotificationPage {
 
         if (inv !== undefined && inv.text.length > 0) {
           Text(inv.text)
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor($r('app.color.text_secondary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -546,7 +584,7 @@ struct NotificationPage {
 
       if (inv !== undefined && inv.unreadCount > 0) {
         Text(this.formatUnread(inv.unreadCount))
-          .fontSize(10)
+          .fontSize(this.fontBadge)
           .fontWeight(FontWeight.Bold)
           .fontColor('#FFFFFF')
           .backgroundColor('#ff4d4f')

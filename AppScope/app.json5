@@ -2,8 +2,8 @@
   "app": {
     "bundleName": "com.github.FlavG2.zhplusN",
     "vendor": "FlavG2",
-    "versionCode": 260830,
-    "versionName": "0.2.260830",
+    "versionCode": 260901,
+    "versionName": "0.5.260901",
     "icon": "$media:icon",
     "label": "$string:app_name"
   }

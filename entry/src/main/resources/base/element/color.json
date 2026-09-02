@@ -2,11 +2,11 @@
   "color": [
     {
       "name": "start_window_background",
-      "value": "#F3F7FB"
+      "value": "#F1F3F5"
     },
     {
       "name": "page_background",
-      "value": "#F5F7FB"
+      "value": "#F1F3F5"
     },
     {
       "name": "text_primary",
@@ -59,6 +59,10 @@
     {
       "name": "action_text",
       "value": "#1D4ED8"
+    },
+    {
+      "name": "brand_blue",
+      "value": "#1772F6"
     },
     {
       "name": "error_text",

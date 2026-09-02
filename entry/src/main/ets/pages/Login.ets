@@ -2,6 +2,7 @@ import common from '@ohos.app.ability.common';
 import { router } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { ZhihuAuthService } from '../services/ZhihuAuthService';
+import { PageHeader } from '../components/PageHeader';
 
 const LOGIN_URL: string = 'https://www.zhihu.com/signin';
 
@@ -28,7 +29,7 @@ function parseCookieString(rawCookie: string): Record<string, string> {
 @Entry
 @Component
 struct Login {
-  @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
+  @StorageProp('fontCaption') private fontCaption: string = '12fp';
   @State private verifying: boolean = false;
   @State private loginError: string = '';
   private readonly webController: webview.WebviewController = new webview.WebviewController();
@@ -64,46 +65,12 @@ struct Login {
 
   build() {
     Column() {
-      Row() {
-        Text('返回')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor($r('app.color.action_text'))
-          .padding({ left: 14, right: 14, top: 8, bottom: 8 })
-          .backgroundColor($r('app.color.action_background'))
-          .borderRadius(16)
-          .onClick(() => {
-            router.back({ url: '' });
-          })
-
-        Column({ space: 2 }) {
-          Text('登录知乎')
-            .fontSize(22)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('app.color.text_primary'))
-
-          Text(this.verifying ? '正在校验登录状态' : '完成登录后会自动返回主页')
-            .fontSize(12)
-            .fontColor($r('app.color.text_secondary'))
-        }
-        .layoutWeight(1)
-        .alignItems(HorizontalAlign.Start)
-        .margin({ left: 12 })
-      }
-      .width('100%')
-      .padding({ left: 20, right: 20, top: this.topSafeAreaVp + 16, bottom: 12 })
-      .backgroundColor($r('app.color.glass_top_bar_background'))
-      .border({
-        width: {
-          bottom: 1
-        },
-        color: $r('app.color.glass_top_bar_border')
-      })
-      .backdropBlur(24)
+      // 单行标题（副标题历史上有 @BuilderParam 跨组件崩溃隐患，这里只留一行）
+      PageHeader({ title: '登录知乎' })
 
       if (this.loginError.length > 0) {
         Text(this.loginError)
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.error_text'))
           .padding({ left: 20, right: 20, bottom: 10 })
       }

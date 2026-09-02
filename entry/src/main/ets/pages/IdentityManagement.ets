@@ -3,13 +3,20 @@ import common from '@ohos.app.ability.common';
 import { ZhihuIdentityClient, ZhihuIdentityAccount } from '../services/ZhihuIdentityClient';
 import { ZhihuSessionRepository } from '../services/ZhihuSessionRepository';
 import { ThemeColors } from '../services/ThemeColors';
+import { PageHeader } from '../components/PageHeader';
 
 @Entry
 @Component
 struct IdentityManagementPage {
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
+  @State topBarHeight: number = 0;
   @StorageLink('oledBlack') private oledBlack: boolean = false;
   @StorageLink('isDark') private isDark: boolean = false;
+  @StorageProp('fontBody') fontBody: string = '16fp';
+  @StorageProp('fontCaption') fontCaption: string = '12fp';
+  @StorageProp('fontSecondary') fontSecondary: string = '14fp';
+  @StorageProp('fontSubhead') fontSubhead: string = '18fp';
+  @StorageProp('fontMeta') fontMeta: string = '13fp';
 
   @State private accounts: ZhihuIdentityAccount[] = [];
   @State private currentAccountId: string = '';
@@ -111,24 +118,6 @@ struct IdentityManagementPage {
     }
   }
 
-  @Builder
-  private Header(): void {
-    Row() {
-      Text('‹')
-        .fontSize(28)
-        .fontColor($r('app.color.text_primary'))
-        .onClick(() => router.back())
-        .padding({ left: 16, right: 8 })
-      Text('身份管理')
-        .fontSize(18)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_primary'))
-    }
-    .width('100%')
-    .height(56)
-    .alignItems(VerticalAlign.Center)
-    .padding({ top: this.topSafeAreaVp })
-  }
 
   @Builder
   private AccountRow(account: ZhihuIdentityAccount): void {
@@ -143,7 +132,7 @@ struct IdentityManagementPage {
       } else {
         Column() {
           Text(account.name.slice(0, 1))
-            .fontSize(16)
+            .fontSize(this.fontBody)
             .fontWeight(FontWeight.Bold)
             .fontColor($r('app.color.action_text'))
         }
@@ -157,31 +146,37 @@ struct IdentityManagementPage {
 
       Column({ space: 4 }) {
         Text(account.name)
-          .fontSize(16)
+          .fontSize(this.fontBody)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
         Text(this.accountTypeLabel(account.accountType))
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .lineHeight(18)
           .fontColor($r('app.color.text_secondary'))
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)
 
-      if (account.id === this.currentAccountId) {
-        Text('当前登录')
-          .fontSize(14)
-          .fontColor($r('app.color.action_text'))
-      } else if (account.id === this.switchingToAccountId) {
-        LoadingProgress()
-          .width(20)
-          .height(20)
-          .color($r('app.color.action_text'))
-      } else {
-        Text('切换')
-          .fontSize(14)
-          .fontColor($r('app.color.action_text'))
+      Row() {
+        if (account.id === this.currentAccountId) {
+          Text('当前登录')
+            .fontSize(this.fontSecondary)
+            .fontColor($r('app.color.action_text'))
+        } else if (account.id === this.switchingToAccountId) {
+          LoadingProgress()
+            .width(20)
+            .height(20)
+            .color($r('app.color.action_text'))
+        } else {
+          Text('切换')
+            .fontSize(this.fontSecondary)
+            .fontColor($r('app.color.action_text'))
+        }
       }
+      .constraintSize({ minWidth: 56 })
+      .justifyContent(FlexAlign.End)
     }
     .width('100%')
     .padding({ left: 16, right: 16, top: 16, bottom: 16 })
@@ -200,20 +195,20 @@ struct IdentityManagementPage {
     Column() {
       Column({ space: 16 }) {
         Text('切换账号')
-          .fontSize(18)
+          .fontSize(this.fontSubhead)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .width('100%')
           .textAlign(TextAlign.Start)
 
         Text(`将切换到「${this.switchTarget?.name ?? ''}」。切换后首页会重新加载，之后的推荐、内容和互动都属于该账号。`)
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .lineHeight(22)
           .fontColor($r('app.color.text_secondary'))
 
         Row({ space: 12 }) {
           Text('取消')
-            .fontSize(16)
+            .fontSize(this.fontBody)
             .fontColor($r('app.color.text_secondary'))
             .padding({ left: 16, right: 16, top: 12, bottom: 12 })
             .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
@@ -228,7 +223,7 @@ struct IdentityManagementPage {
             .textAlign(TextAlign.Center)
 
           Text('切换')
-            .fontSize(16)
+            .fontSize(this.fontBody)
             .fontColor('#FFFFFFFF')
             .padding({ left: 16, right: 16, top: 12, bottom: 12 })
             .backgroundColor($r('app.color.action_text'))
@@ -267,7 +262,7 @@ struct IdentityManagementPage {
     Column() {
       Column({ space: 16 }) {
         Text('新账号使用规则')
-          .fontSize(18)
+          .fontSize(this.fontSubhead)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .width('100%')
@@ -278,7 +273,7 @@ struct IdentityManagementPage {
           '新账号拥有独立的昵称、头像与个人主页，账号之间的内容、数据、互动行为完全隔离。' +
           '两个账号均需遵守社区规范与用户协议，任一账号存在违规行为，可能影响同一手机号下其他账号的使用权限。'
         )
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .lineHeight(22)
           .fontColor($r('app.color.text_secondary'))
 
@@ -289,7 +284,7 @@ struct IdentityManagementPage {
               this.acceptedCreateRules = v;
             })
           Text('我已知悉创建机会有限，创建后将立即切换')
-            .fontSize(14)
+            .fontSize(this.fontSecondary)
             .fontColor($r('app.color.text_primary'))
             .layoutWeight(1)
         }
@@ -297,7 +292,7 @@ struct IdentityManagementPage {
 
         Row({ space: 12 }) {
           Text('取消')
-            .fontSize(16)
+            .fontSize(this.fontBody)
             .fontColor($r('app.color.text_secondary'))
             .padding({ left: 16, right: 16, top: 12, bottom: 12 })
             .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
@@ -312,7 +307,7 @@ struct IdentityManagementPage {
             .textAlign(TextAlign.Center)
 
           Text('同意并创建')
-            .fontSize(16)
+            .fontSize(this.fontBody)
             .fontColor(this.canCreateSubAccount() && !this.isBusy() ? '#FFFFFFFF' : $r('app.color.text_secondary'))
             .padding({ left: 16, right: 16, top: 12, bottom: 12 })
             .backgroundColor(this.canCreateSubAccount() && !this.isBusy() ? $r('app.color.action_text') : $r('app.color.card_border'))
@@ -347,8 +342,14 @@ struct IdentityManagementPage {
 
   build() {
     Stack() {
-      Column() {
-        this.Header()
+      Stack({ alignContent: Alignment.Top }) {
+        PageHeader({ title: '身份管理' })
+          .zIndex(2)
+          .onAreaChange((_old: Area, newValue: Area) => {
+            if (newValue.height > 0) {
+              this.topBarHeight = Number(newValue.height);
+            }
+          })
 
         Scroll() {
           Column({ space: 16 }) {
@@ -356,11 +357,11 @@ struct IdentityManagementPage {
             if (this.errorMessage !== null) {
               Column({ space: 8 }) {
                 Text('加载失败')
-                  .fontSize(16)
+                  .fontSize(this.fontBody)
                   .fontWeight(FontWeight.Medium)
                   .fontColor($r('app.color.text_primary'))
                 Text(this.errorMessage ?? '')
-                  .fontSize(13)
+                  .fontSize(this.fontMeta)
                   .lineHeight(20)
                   .fontColor($r('app.color.text_secondary'))
               }
@@ -391,12 +392,12 @@ struct IdentityManagementPage {
             if (this.accounts.length > 0) {
               Column({ space: 4 }) {
                 Text('当前手机号下的账号')
-                  .fontSize(13)
+                  .fontSize(this.fontMeta)
                   .fontWeight(FontWeight.Medium)
                   .fontColor($r('app.color.text_secondary'))
                   .padding({ left: 4 })
                 Text('两个账号共用当前手机号，但昵称、主页、内容、推荐和互动数据相互独立。')
-                  .fontSize(12)
+                  .fontSize(this.fontCaption)
                   .lineHeight(18)
                   .fontColor($r('app.color.text_secondary'))
                   .padding({ left: 4, bottom: 4 })
@@ -416,11 +417,11 @@ struct IdentityManagementPage {
             } else if (!this.loading && this.errorMessage === null) {
               Column({ space: 8 }) {
                 Text('未找到可管理的账号')
-                  .fontSize(16)
+                  .fontSize(this.fontBody)
                   .fontWeight(FontWeight.Medium)
                   .fontColor($r('app.color.text_primary'))
                 Text('请确认当前登录状态后重试')
-                  .fontSize(13)
+                  .fontSize(this.fontMeta)
                   .lineHeight(20)
                   .fontColor($r('app.color.text_secondary'))
               }
@@ -435,7 +436,7 @@ struct IdentityManagementPage {
             if (this.accounts.length > 0) {
               Column({ space: 4 }) {
                 Text('新账号')
-                  .fontSize(13)
+                  .fontSize(this.fontMeta)
                   .fontWeight(FontWeight.Medium)
                   .fontColor($r('app.color.text_secondary'))
                   .padding({ left: 4 })
@@ -446,7 +447,7 @@ struct IdentityManagementPage {
                       ? '当前手机号下已经存在主账号和马甲号。'
                       : '当前登录账号暂不满足创建新账号的条件。')
                 )
-                  .fontSize(12)
+                  .fontSize(this.fontCaption)
                   .lineHeight(18)
                   .fontColor($r('app.color.text_secondary'))
                   .padding({ left: 4, bottom: 4 })
@@ -455,11 +456,11 @@ struct IdentityManagementPage {
                   Row({ space: 12 }) {
                     Column({ space: 4 }) {
                       Text('创建新账号')
-                        .fontSize(16)
+                        .fontSize(this.fontBody)
                         .fontWeight(FontWeight.Medium)
                         .fontColor($r('app.color.text_primary'))
                       Text('共用当前手机号，数据相互独立')
-                        .fontSize(12)
+                        .fontSize(this.fontCaption)
                         .lineHeight(18)
                         .fontColor($r('app.color.text_secondary'))
                     }
@@ -495,12 +496,15 @@ struct IdentityManagementPage {
           }
           .padding({ left: 16, right: 16, top: 12, bottom: 24 })
         }
+        .width('100%')
+        .height('100%')
+        .padding({ top: this.topBarHeight })
         .scrollBar(BarState.Off)
-        .layoutWeight(1)
       }
       .width('100%')
       .height('100%')
       .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
 
       if (this.switchTarget !== null) {
         this.SwitchDialog();

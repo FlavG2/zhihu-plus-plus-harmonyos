@@ -1,5 +1,5 @@
 import common from '@ohos.app.ability.common';
-import { promptAction, router } from '@kit.ArkUI';
+import { promptAction, router, curves } from '@kit.ArkUI';
 import { systemShare } from '@kit.ShareKit';
 import { uniformTypeDescriptor as utd } from '@kit.ArkData';
 import {
@@ -22,6 +22,7 @@ import { ThemeColors } from '../services/ThemeColors';
 import { ZhihuEmojiItem, EmojiPickerItem, ZhihuEmojiService, CommentContentSegment } from '../services/ZhihuEmojiService';
 import { formatTimestamp } from '../utils/Time';
 import { stripCommentImageLinks } from '../utils/ZhihuHtml';
+import { ContentTopBar } from '../components/ContentTopBar';
 
 interface QuestionPageParams {
   readonly questionId?: string;
@@ -224,6 +225,17 @@ function updateCommentLike(comments: ZhihuCommentItem[], commentId: string, like
 @Entry
 @Component
 struct Question {
+  @StorageProp('cardPadding') private cardPadding: number = 16;
+  @StorageProp('buttonRadius') private buttonRadius: number = 20;
+  @StorageProp('pillRadius') private pillRadius: number = 18;
+  @StorageProp('cardRadius') private cardRadius: number = 16;
+  @StorageProp('fontSymbol') private fontSymbol: string = '24fp';
+  @StorageProp('fontHeading') private fontHeading: string = '20fp';
+  @StorageProp('fontBody') private fontBody: string = '16fp';
+  @StorageProp('fontSecondary') private fontSecondary: string = '14fp';
+  @StorageProp('fontMeta') private fontMeta: string = '13fp';
+  @StorageProp('fontCaption') private fontCaption: string = '12fp';
+  @StorageProp('fontLargeTitle') private fontLargeTitle: string = '26fp';
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
   @StorageProp('bottomSafeAreaVp') private bottomSafeAreaVp: number = 0;
   @StorageLink('oledBlack') private oledBlack: boolean = false;
@@ -243,6 +255,19 @@ struct Question {
   @State private answersHasLoaded: boolean = false;
   @State private refreshing: boolean = false;
   @State private followBusy: boolean = false;
+
+  // 顶栏跟手显隐（对齐文章/想法页）：List 滚动驱动 offsetY（0=显示，负=隐藏）
+  @State private topBarOffsetY: number = 0;
+  @State private topBarHeight: number = 0;
+  @State private contentProgress: number = 0; // 顶栏 A→B 标题淡入进度 0..1
+  private lastScrollTop: number = 0;
+  private wasAtTopQ: boolean = true;          // atTop 翻转检测，用于回弹弹簧
+  // List.onScroll 传的是"当帧滚动增量"（向上滚为正），不是累计位置；
+  // 必须自己维护累计值，否则 atTop/delta 判定全部错位（顶栏下滑永不隐藏）
+  private scrollPosQ: number = 0;
+  // 问题头（QuestionHeader）底边实测位置：A→B 淡入进度由它驱动（对齐文章页摘要卡片实测法）
+  private headerBottomPx: number = 0;
+  private headerBoundsKnown: boolean = false;
 
   // 评论子系统（移植自 Article.ets，question 类型由 CommentService 支持）
   @State private showRootCommentSheet: boolean = false;
@@ -408,6 +433,9 @@ struct Question {
   private refreshAll(): void {
     this.answersNextUrl = '';
     this.answersEnd = false;
+    // Refresh 回顶：累计滚动位置归零，否则 atTop/淡入判定沿旧位置错算
+    this.scrollPosQ = 0;
+    this.lastScrollTop = 0;
     this.loadDetail();
     this.loadFirstPage();
   }
@@ -500,6 +528,38 @@ struct Question {
         url: `https://www.zhihu.com/question/${this.questionId}`
       }
     });
+  }
+
+  // 顶栏跟手显隐：顶部可见（紧凑态），下滑隐藏，上滑显示（对齐文章/想法页 updateBarsOnScroll）
+  // List.onScroll 的 frameDelta 是当帧增量（向上滚为正）：先累计成绝对位置，再按文章页语义判定
+  private updateTopBarOnScroll(frameDelta: number): void {
+    const pos = Math.max(0, this.scrollPosQ + frameDelta);
+    this.scrollPosQ = pos;
+    const atTop = pos <= 1;
+    const delta = pos - this.lastScrollTop;
+    this.lastScrollTop = pos;
+    // 顶栏整条（含状态栏）滑出终点：优先用实测高度；未测得时给兜底高度，避免 topBarHeight 为 0 时整段被跳过 → 顶栏常驻
+    const topTotal = this.topBarHeight > 0 ? this.topBarHeight : (this.topSafeAreaVp + 56);
+    if (atTop) {
+      if (!this.wasAtTopQ) {
+        animateTo({ curve: curves.springMotion(), duration: 300 }, () => { this.topBarOffsetY = 0; });
+      } else {
+        this.topBarOffsetY = 0;
+      }
+    } else if (delta > 0) {
+      this.topBarOffsetY = Math.max(-topTotal, this.topBarOffsetY - delta);
+    } else {
+      this.topBarOffsetY = Math.min(0, Math.max(-topTotal, this.topBarOffsetY - delta));
+    }
+    this.wasAtTopQ = atTop;
+    // 顶栏 A→B 标题连续淡入进度：问题头底边滚过顶栏下方约 80px 区间完成淡入（实测驱动，对齐文章页摘要卡片）
+    const fade = 80;
+    const p = this.headerBoundsKnown
+      ? Math.min(1, Math.max(0, (pos - (this.headerBottomPx - fade)) / fade))
+      : 0;
+    if (p !== this.contentProgress) {
+      this.contentProgress = p;
+    }
   }
 
   private statsText(): string {
@@ -868,53 +928,9 @@ struct Question {
   }
 
   @Builder
-  private TopBar(): void {
-    Row({ space: 10 }) {
-      Text('返回')
-        .fontSize(14)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.action_text'))
-        .padding({ left: 12, right: 12, top: 9, bottom: 9 })
-        .backgroundColor($r('app.color.action_background'))
-        .borderRadius(18)
-        .onClick(() => {
-          router.back({ url: '' });
-        })
-
-      Text('问题')
-        .fontSize(16)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.text_primary'))
-        .layoutWeight(1)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      Text('网页版')
-        .fontSize(13)
-        .fontWeight(FontWeight.Medium)
-        .fontColor($r('app.color.text_secondary'))
-        .padding({ left: 10, right: 10, top: 8, bottom: 8 })
-        .onClick(() => {
-          this.openWebVersion();
-        })
-    }
-    .alignItems(VerticalAlign.Center)
-    .width('100%')
-    .padding({ left: 16, right: 16, top: this.topSafeAreaVp + 12, bottom: 12 })
-    .backgroundColor($r('app.color.glass_top_bar_background'))
-    .border({
-      width: {
-        bottom: 1
-      },
-      color: $r('app.color.glass_top_bar_border')
-    })
-    .backdropBlur(28)
-  }
-
-  @Builder
   private SortChip(label: string, order: QuestionAnswerSortOrder): void {
     Text(label)
-      .fontSize(13)
+      .fontSize(this.fontMeta)
       .fontWeight(FontWeight.Medium)
       .fontColor(this.sortOrder === order ? $r('app.color.tab_selected_text') : $r('app.color.text_secondary'))
       .padding({ left: 14, right: 14, top: 7, bottom: 7 })
@@ -923,7 +939,7 @@ struct Question {
         width: 1,
         color: this.sortOrder === order ? $r('app.color.tab_selected_border') : $r('app.color.card_border')
       })
-      .borderRadius(16)
+      .borderRadius(this.cardRadius)
       .onClick(() => {
         this.switchSortOrder(order);
       })
@@ -936,48 +952,48 @@ struct Question {
     Scroll() {
       Row({ space: 10 }) {
         Text('日志')
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.action_text'))
           .padding({ left: 14, right: 14, top: 8, bottom: 8 })
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(16)
+          .borderRadius(this.cardRadius)
           .onClick(() => {
             this.openQuestionLog();
           })
 
         Text(`评论 ${this.detail?.commentCount ?? 0}`)
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .padding({ left: 14, right: 14, top: 8, bottom: 8 })
           .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
           .border({ width: 1, color: $r('app.color.card_border') })
-          .borderRadius(16)
+          .borderRadius(this.cardRadius)
           .onClick(() => {
             this.openComments();
           })
 
         Text('分享')
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .padding({ left: 14, right: 14, top: 8, bottom: 8 })
           .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
           .border({ width: 1, color: $r('app.color.card_border') })
-          .borderRadius(16)
+          .borderRadius(this.cardRadius)
           .onClick(() => {
             this.systemShare();
           })
 
         Text('在知乎中打开')
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.text_primary'))
           .padding({ left: 14, right: 14, top: 8, bottom: 8 })
           .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
           .border({ width: 1, color: $r('app.color.card_border') })
-          .borderRadius(16)
+          .borderRadius(this.cardRadius)
           .onClick(() => {
             this.openInZhihuApp();
           })
@@ -995,7 +1011,7 @@ struct Question {
       // 第一行：标题（用户要求移除返回按钮）
       Row({ space: 10 }) {
         Text(this.questionTitle)
-          .fontSize(22)
+          .fontSize(this.fontHeading)
           .fontWeight(FontWeight.Bold)
           .lineHeight(31)
           .fontColor($r('app.color.text_primary'))
@@ -1004,13 +1020,13 @@ struct Question {
       }
       .width('100%')
       .alignItems(VerticalAlign.Top)
-      .padding({ left: 16, right: 16, top: this.topSafeAreaVp + 12, bottom: 0 })
+      .padding({ left: 16, right: 16, top: this.topSafeAreaVp + 12 + 56, bottom: 0 })
 
       // 以下内容左对齐到"返"字位置（Row的padding-left 16 + 返回按钮padding-left 12 = 28）
       Column({ space: 12 }) {
         if (this.detailError.length > 0) {
           Text(this.detailError)
-            .fontSize(12)
+            .fontSize(this.fontCaption)
             .fontColor($r('app.color.error_text'))
             .width('100%')
         }
@@ -1019,13 +1035,13 @@ struct Question {
           Column({ space: 8 }) {
             Row() {
               Text('问题详情')
-                .fontSize(14)
+                .fontSize(this.fontSecondary)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_primary'))
                 .layoutWeight(1)
 
               Text(this.detailExpanded ? '收起详情' : '展开详情')
-                .fontSize(13)
+                .fontSize(this.fontMeta)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.action_text'))
                 .onClick(() => {
@@ -1054,7 +1070,7 @@ struct Question {
                             (span: InlineSpan, si: number) => {
                               if (span.isLink && span.url) {
                                 Span(span.text)
-                                  .fontSize(14)
+                                  .fontSize(this.fontSecondary)
                                   .fontColor('#1565C0')
                                   .decoration({ type: TextDecorationType.Underline, color: '#1565C0' })
                                   .onClick(() => {
@@ -1062,14 +1078,14 @@ struct Question {
                                   })
                               } else {
                                 Span(span.text)
-                                  .fontSize(14)
+                                  .fontSize(this.fontSecondary)
                                   .fontColor($r('app.color.text_secondary'))
                               }
                             },
                             (span: InlineSpan, si: number) => `${si}_${span.isLink ? 'link' : 'text'}`
                           )
                         }
-                        .fontSize(14)
+                        .fontSize(this.fontSecondary)
                         .lineHeight(22)
                         .fontColor($r('app.color.text_secondary'))
                         .width('100%')
@@ -1083,7 +1099,7 @@ struct Question {
                 .width('100%')
               } else {
                 Text(this.detail?.detailText ?? this.detail?.excerpt ?? '')
-                  .fontSize(14)
+                  .fontSize(this.fontSecondary)
                   .lineHeight(22)
                   .fontColor($r('app.color.text_secondary'))
                   .copyOption(CopyOptions.LocalDevice)
@@ -1093,7 +1109,7 @@ struct Question {
               Text((this.detail?.detailText ?? this.detail?.excerpt ?? '').length > 0
                 ? (this.detail?.detailText ?? this.detail?.excerpt ?? '')
                 : '（点击展开查看问题描述）')
-                .fontSize(14)
+                .fontSize(this.fontSecondary)
                 .lineHeight(22)
                 .fontColor($r('app.color.text_secondary'))
                 .maxLines(3)
@@ -1106,12 +1122,12 @@ struct Question {
           .padding({ left: 0, right: 14, top: 14, bottom: 14 })
           .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
           .border({ width: 1, color: $r('app.color.card_border') })
-          .borderRadius(14)
+          .borderRadius(this.cardRadius)
         }
 
         Row({ space: 8 }) {
           Text('排序：')
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontColor($r('app.color.text_secondary'))
 
           this.SortChip('默认', 'default');
@@ -1120,13 +1136,13 @@ struct Question {
           Blank()
 
           Text(this.detail?.isFollowing === true ? '已关注' : '关注问题')
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontWeight(FontWeight.Medium)
             .fontColor(this.detail?.isFollowing === true ? $r('app.color.text_secondary') : $r('app.color.action_text'))
             .padding({ left: 14, right: 14, top: 7, bottom: 7 })
             .backgroundColor(this.detail?.isFollowing === true ? ThemeColors.cardBackground(this.oledBlack, this.isDark) : $r('app.color.action_background'))
             .border({ width: 1, color: $r('app.color.card_border') })
-            .borderRadius(16)
+            .borderRadius(this.cardRadius)
             .enabled(this.detail !== undefined && !this.followBusy)
             .onClick(() => {
               this.toggleFollow();
@@ -1135,11 +1151,9 @@ struct Question {
         .width('100%')
         .alignItems(VerticalAlign.Center)
 
-        this.ActionButtons();
-
         if (this.statsText().length > 0) {
           Text(this.statsText())
-            .fontSize(12)
+            .fontSize(this.fontCaption)
             .fontColor($r('app.color.text_tertiary'))
             .width('100%')
         }
@@ -1163,12 +1177,12 @@ struct Question {
             .width(38)
             .height(38)
             .objectFit(ImageFit.Cover)
-            .borderRadius(19)
+            .borderRadius(this.pillRadius)
             .clip(true)
         } else {
           Column() {
             Text(item.authorName.length > 0 ? item.authorName.slice(0, 1) : '答')
-              .fontSize(13)
+              .fontSize(this.fontMeta)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.action_text'))
           }
@@ -1177,18 +1191,18 @@ struct Question {
           .justifyContent(FlexAlign.Center)
           .alignItems(HorizontalAlign.Center)
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(19)
+          .borderRadius(this.pillRadius)
         }
 
         Column({ space: 2 }) {
           Text(item.authorName.length > 0 ? item.authorName : '匿名用户')
-            .fontSize(14)
+            .fontSize(this.fontSecondary)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.text_primary'))
 
           if (item.authorHeadline.length > 0) {
             Text(item.authorHeadline)
-              .fontSize(11)
+              .fontSize(this.fontCaption)
               .fontColor($r('app.color.text_secondary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1203,7 +1217,7 @@ struct Question {
         Column({ space: 8 }) {
       if (item.summary.length > 0) {
         Text(item.summary)
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .lineHeight(22)
           .fontColor($r('app.color.text_primary'))
           .maxLines(4)
@@ -1211,7 +1225,7 @@ struct Question {
           }
 
           Text(item.details)
-            .fontSize(12)
+            .fontSize(this.fontCaption)
             .fontColor($r('app.color.text_tertiary'))
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1227,21 +1241,21 @@ struct Question {
             .width(88)
             .height(88)
             .objectFit(ImageFit.Cover)
-            .borderRadius(12)
+            .borderRadius(this.cardRadius)
         }
       }
       .width('100%')
       .alignItems(VerticalAlign.Top)
     }
     .width('100%')
-    .padding(16)
+    .padding(this.cardPadding)
     .margin({ left: 16, right: 16, bottom: 12 })
     .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
     .border({
       width: 1,
       color: $r('app.color.card_border')
     })
-    .borderRadius(18)
+    .borderRadius(this.pillRadius)
     .clip(true)
     .onClick(() => {
       this.openAnswer(item);
@@ -1257,7 +1271,7 @@ struct Question {
           .height(34)
           .color($r('app.color.action_text'))
         Text('正在加载回答...')
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontColor($r('app.color.text_secondary'))
       }
       .width('100%')
@@ -1266,17 +1280,17 @@ struct Question {
     } else if (this.answersError.length > 0 && !this.answersHasLoaded) {
       Column({ space: 12 }) {
         Text(this.answersError)
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .fontColor($r('app.color.error_text'))
           .textAlign(TextAlign.Center)
 
         Text('重试')
-          .fontSize(14)
+          .fontSize(this.fontSecondary)
           .fontWeight(FontWeight.Medium)
           .fontColor($r('app.color.action_text'))
           .padding({ left: 18, right: 18, top: 9, bottom: 9 })
           .backgroundColor($r('app.color.action_background'))
-          .borderRadius(18)
+          .borderRadius(this.pillRadius)
           .onClick(() => {
             this.loadFirstPage();
           })
@@ -1286,7 +1300,7 @@ struct Question {
       .alignItems(HorizontalAlign.Center)
     } else if (this.answersHasLoaded && this.answers.length === 0) {
       Text('暂时没有回答')
-        .fontSize(13)
+        .fontSize(this.fontMeta)
         .fontColor($r('app.color.text_secondary'))
         .width('100%')
         .textAlign(TextAlign.Center)
@@ -1299,7 +1313,7 @@ struct Question {
       if (!this.answersEnd && this.answersHasLoaded && this.answers.length > 0 && !this.answersLoadingMore) {
         Row({ space: 8 }) {
           Text('加载更多回答')
-            .fontSize(13)
+            .fontSize(this.fontMeta)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.action_text'))
         }
@@ -1313,7 +1327,7 @@ struct Question {
 
       if (this.answersError.length > 0) {
         Text(this.answersError)
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.error_text'))
           .width('100%')
           .textAlign(TextAlign.Center)
@@ -1327,7 +1341,7 @@ struct Question {
             .height(20)
             .color($r('app.color.action_text'))
           Text('正在加载更多...')
-            .fontSize(12)
+            .fontSize(this.fontCaption)
             .fontColor($r('app.color.text_secondary'))
         }
         .width('100%')
@@ -1335,7 +1349,7 @@ struct Question {
         .padding({ top: 6, bottom: 18 })
       } else if (this.answersEnd) {
         Text('已经到底了')
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_tertiary'))
           .width('100%')
           .textAlign(TextAlign.Center)
@@ -1347,12 +1361,12 @@ struct Question {
   @Builder
   private CommentSortChip(label: string, selected: boolean, onClick: () => void): void {
     Text(label)
-      .fontSize(12)
+      .fontSize(this.fontCaption)
       .fontWeight(selected ? FontWeight.Medium : FontWeight.Regular)
       .fontColor(selected ? $r('app.color.action_text') : $r('app.color.text_secondary'))
       .padding({ left: 14, right: 14, top: 7, bottom: 7 })
       .backgroundColor(selected ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
-      .borderRadius(16)
+      .borderRadius(this.cardRadius)
       .border({
         width: 1,
         color: selected ? $r('app.color.action_background') : $r('app.color.card_border')
@@ -1366,7 +1380,7 @@ struct Question {
   private CommentSheetStatus(message: string, error: boolean = false): void {
     Column({ space: 8 }) {
       Text(message)
-        .fontSize(14)
+        .fontSize(this.fontSecondary)
         .textAlign(TextAlign.Center)
         .fontColor(error ? $r('app.color.error_text') : $r('app.color.text_secondary'))
     }
@@ -1393,7 +1407,7 @@ struct Question {
               .objectFit(ImageFit.Contain)
           } else {
             Text(item.fallback ?? '')
-              .fontSize(28)
+              .fontSize(this.fontSymbol)
               .textAlign(TextAlign.Center)
               .width('100%')
               .height('100%')
@@ -1444,13 +1458,13 @@ struct Question {
   private CommentListLoadMore(label: string, enabled: boolean, onClick: () => void): void {
     Row() {
       Text(label)
-        .fontSize(12)
+        .fontSize(this.fontCaption)
         .fontWeight(FontWeight.Medium)
         .fontColor(enabled ? $r('app.color.action_text') : $r('app.color.text_tertiary'))
     }
     .padding({ left: 14, right: 14, top: 8, bottom: 8 })
     .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
-    .borderRadius(16)
+    .borderRadius(this.cardRadius)
     .border({ width: 1, color: $r('app.color.card_border') })
     .enabled(enabled)
     .onClick(() => {
@@ -1490,13 +1504,13 @@ struct Question {
       if (this.resolveReplyTo(isChild) !== undefined) {
         Row({ space: 8 }) {
           Text(`回复 ${this.resolveReplyTo(isChild)?.author.name ?? ''}`)
-            .fontSize(12)
+            .fontSize(this.fontCaption)
             .fontWeight(FontWeight.Medium)
             .fontColor($r('app.color.action_text'))
             .layoutWeight(1)
 
           Text('取消')
-            .fontSize(12)
+            .fontSize(this.fontCaption)
             .fontColor($r('app.color.text_secondary'))
             .onClick(() => {
               onClearReply();
@@ -1505,25 +1519,21 @@ struct Question {
         .width('100%')
         .padding({ left: 12, right: 12, top: 9, bottom: 9 })
         .backgroundColor($r('app.color.action_background'))
-        .borderRadius(14)
+        .borderRadius(this.cardRadius)
       }
 
-      Row({ space: 10 }) {
+      Row({ space: 8 }) {
         if (this.liveEmojiPanelOpen(isChild)) {
-          Image($r('app.media.ic_keyboard'))
-            .width(26)
-            .height(26)
-            .fillColor($r('app.color.text_secondary'))
-            .renderMode(ImageRenderMode.Template)
-            .onClick(() => {
-              onToggleEmoji();
-            })
+            SymbolGlyph($r('sys.symbol.keyboard'))
+              .fontSize(this.fontLargeTitle)
+              .fontColor([$r('app.color.text_secondary')])
+              .onClick(() => {
+                onToggleEmoji();
+              })
         } else {
-          Image($r('app.media.ic_emoji'))
-            .width(26)
-            .height(26)
-            .fillColor($r('app.color.text_secondary'))
-            .renderMode(ImageRenderMode.Template)
+          SymbolGlyph($r('sys.symbol.face_smiling'))
+            .fontSize(this.fontLargeTitle)
+            .fontColor([$r('app.color.text_secondary')])
             .onClick(() => {
               onToggleEmoji();
             })
@@ -1540,12 +1550,10 @@ struct Question {
           .constraintSize({ minHeight: 44 })
           .id(isChild ? 'childCommentInput' : 'rootCommentInput')
           .focusable(true)
-          .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+          .backgroundColor(Color.Transparent)
           .fontColor($r('app.color.text_primary'))
           .placeholderColor($r('app.color.text_tertiary'))
-          .borderRadius(22)
-          .border({ width: 1, color: $r('app.color.card_border') })
-          .padding({ left: 14, right: 14 })
+          .padding({ left: 6, right: 6 })
           .onChange((value: string) => {
             onDraftChange(value);
           })
@@ -1564,39 +1572,35 @@ struct Question {
             }
           })
 
-        Text(this.liveCommentSubmitting(isChild) ? '发送中' : '发送')
-          .fontSize(14)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(
+        SymbolGlyph($r('sys.symbol.paperplane'))
+          .fontSize(this.fontLargeTitle)
+          .fontColor([
             this.liveCommentSubmitting(isChild) || this.liveCommentDraft(isChild).trim().length === 0
               ? $r('app.color.text_tertiary')
               : $r('app.color.action_text')
-          )
-          .padding({ left: 16, right: 16, top: 11, bottom: 11 })
-          .backgroundColor(
-            this.liveCommentDraft(isChild).trim().length === 0
-              ? ThemeColors.feedBackground(this.oledBlack, this.isDark)
-              : $r('app.color.action_background')
-          )
-          .borderRadius(20)
-          .border({ width: 1, color: $r('app.color.card_border') })
+          ])
           .enabled(!this.liveCommentSubmitting(isChild) && this.liveCommentDraft(isChild).trim().length > 0)
           .onClick(() => {
             onSubmit();
           })
       }
       .width('100%')
+      .padding({ left: 12, right: 8, top: 5, bottom: 5 })
+      .backgroundColor(ThemeColors.floatBarBackground(this.oledBlack, this.isDark))
+      .backgroundBlurStyle(BlurStyle.Thin)
+      .border({
+        width: 1,
+        color: this.isDark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.06)',
+        radius: this.cardRadius * 2
+      })
+      .shadow(this.isDark
+        ? { radius: 10, color: 'rgba(0,0,0,0.45)', offsetX: 0, offsetY: -2 }
+        : { radius: 8, color: 'rgba(0,0,0,0.08)', offsetX: 0, offsetY: -1 })
       .margin({ top: this.resolveReplyTo(isChild) !== undefined ? 10 : 0 })
     }
     .width('100%')
-    .padding({ left: 16, right: 16, top: 10, bottom: this.liveEmojiPanelOpen(isChild) ? 10 : this.bottomSafeAreaVp + 10 })
-    .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-    .border({
-      width: {
-        top: 1
-      },
-      color: $r('app.color.card_border')
-    })
+    .padding({ left: 14, right: 14, top: 8, bottom: this.liveEmojiPanelOpen(isChild) ? 8 : this.bottomSafeAreaVp + 8 })
+    .backgroundColor(Color.Transparent)
   }
 
   @Builder
@@ -1620,7 +1624,7 @@ struct Question {
         } else {
           Column() {
             Text(comment.author.name.slice(0, 1))
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('app.color.action_text'))
           }
@@ -1647,7 +1651,7 @@ struct Question {
 
             if (comment.authorTag.length > 0) {
               Text(comment.authorTag)
-                .fontSize(11)
+                .fontSize(this.fontCaption)
                 .fontColor($r('app.color.action_text'))
                 .padding({ left: 6, right: 6, top: 2, bottom: 2 })
                 .backgroundColor($r('app.color.action_background'))
@@ -1656,7 +1660,7 @@ struct Question {
 
             if (comment.replyToAuthor !== undefined) {
               Text(`回复 ${comment.replyToAuthor.name}`)
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .fontColor($r('app.color.text_secondary'))
                 .maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1705,7 +1709,7 @@ struct Question {
               .width(compact ? 128 : 180)
               .height(compact ? 96 : 120)
               .objectFit(ImageFit.Cover)
-              .borderRadius(12)
+              .borderRadius(this.cardRadius)
               .onClick(() => {
                 this.openCommentImage(comment.previewImageUrl);
               })
@@ -1720,14 +1724,14 @@ struct Question {
       Row({ space: 8 }) {
         Row({ space: 8 }) {
           Text(formatUnixTime(comment.createdTime))
-            .fontSize(11)
+            .fontSize(this.fontCaption)
             .fontColor($r('app.color.text_secondary'))
             .maxLines(1)
 
           if (comment.ipInfo.length > 0) {
             Text(comment.ipInfo)
               .layoutWeight(1)
-              .fontSize(11)
+              .fontSize(this.fontCaption)
               .fontColor($r('app.color.text_secondary'))
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1738,18 +1742,13 @@ struct Question {
 
         Row({ space: 12 }) {
           Row({ space: 4 }) {
-            Image($r('app.media.ic_comment'))
-              .width(16)
-              .height(16)
-              .renderMode(ImageRenderMode.Template)
-              .fillColor($r('app.color.action_pill_icon'))
-              .draggable(false)
-              .syncLoad(true)
-              .interpolation(ImageInterpolation.Low)
+            SymbolGlyph($r('sys.symbol.message'))
+              .fontSize(this.fontBody)
+              .fontColor([$r('app.color.action_pill_icon')])
 
             if (!fromChildSheet && comment.childCommentCount > 0) {
               Text(`${comment.childCommentCount}`)
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .fontColor($r('app.color.text_secondary'))
             }
           }
@@ -1765,17 +1764,12 @@ struct Question {
           .alignItems(VerticalAlign.Center)
 
           Row({ space: 4 }) {
-            Image($r('app.media.ic_agree'))
-              .width(16)
-              .height(16)
-              .renderMode(ImageRenderMode.Template)
-              .fillColor(comment.liked ? $r('app.color.action_text') : $r('app.color.action_pill_icon'))
-              .draggable(false)
-              .syncLoad(true)
-              .interpolation(ImageInterpolation.Low)
+            SymbolGlyph($r('sys.symbol.arrow_up'))
+              .fontSize(this.fontBody)
+              .fontColor([comment.liked ? $r('app.color.action_text') : $r('app.color.action_pill_icon')])
 
             Text(`${comment.likeCount}`)
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontColor(comment.liked ? $r('app.color.action_text') : $r('app.color.text_secondary'))
           }
           .padding({ left: 4, right: 4, top: 4, bottom: 4 })
@@ -1813,13 +1807,13 @@ struct Question {
         Row() {
           Row({ space: 6 }) {
             Text(`查看 ${comment.childCommentCount} 条子评论`)
-              .fontSize(12)
+              .fontSize(this.fontCaption)
               .fontWeight(FontWeight.Medium)
               .fontColor($r('app.color.text_primary'))
           }
           .padding({ left: 14, right: 14, top: 8, bottom: 8 })
           .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
-          .borderRadius(16)
+          .borderRadius(this.cardRadius)
           .border({ width: 1, color: $r('app.color.card_border') })
           .onClick(() => {
             this.openChildComments(comment);
@@ -1839,11 +1833,11 @@ struct Question {
     Column() {
       Column({ space: 12 }) {
         Text('评论')
-          .fontSize(20)
+          .fontSize(this.fontHeading)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
         Text(`${this.detail?.commentCount ?? 0} 条评论`)
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
 
         Row({ space: 10 }) {
@@ -1958,11 +1952,11 @@ focusControl.requestFocus('rootCommentInput');
     Column() {
       Column({ space: 6 }) {
         Text('回复')
-          .fontSize(20)
+          .fontSize(this.fontHeading)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('app.color.text_primary'))
         Text(`${this.activeChildComment?.childCommentCount ?? this.childComments.length} 条回复`)
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
       }
       .width('100%')
@@ -1974,7 +1968,7 @@ focusControl.requestFocus('rootCommentInput');
           if (this.activeChildComment !== undefined) {
             Column({ space: 12 }) {
               Text('原评论')
-                .fontSize(12)
+                .fontSize(this.fontCaption)
                 .fontWeight(FontWeight.Medium)
                 .fontColor($r('app.color.text_secondary'))
 
@@ -1983,7 +1977,7 @@ focusControl.requestFocus('rootCommentInput');
             .width('100%')
             .padding({ left: 14, right: 14, top: 14, bottom: 14 })
             .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-            .borderRadius(18)
+            .borderRadius(this.pillRadius)
             .border({ width: 1, color: $r('app.color.card_border') })
           }
 
@@ -2055,12 +2049,23 @@ focusControl.requestFocus('childCommentInput');
   }
 
   build() {
-    Column() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column() {
       Refresh({ refreshing: $$this.refreshing }) {
         List() {
           ListItem() {
             this.QuestionHeader();
           }
+          .onAreaChange((_old: Area, newValue: Area) => {
+            if (newValue && newValue.height > 0) {
+              // 记录问题头底边的文档坐标（内容未滚动时全局位置 ≈ 高度偏移），供 A→B 淡入进度实测驱动
+              const global = newValue.globalPosition;
+              if (global) {
+                this.headerBottomPx = Number(global.y) + Number(newValue.height) - this.topBarOffsetY;
+                this.headerBoundsKnown = true;
+              }
+            }
+          })
 
           ListItem() {
             Column() {
@@ -2079,6 +2084,9 @@ focusControl.requestFocus('childCommentInput');
         .height('100%')
         .scrollBar(BarState.Off)
         .edgeEffect(EdgeEffect.Spring)
+        .onScroll((scrollOffset: number, _scrollState: ScrollState) => {
+          this.updateTopBarOnScroll(scrollOffset);
+        })
         .onReachEnd(() => {
           this.loadMoreAnswers();
         })
@@ -2136,6 +2144,32 @@ focusControl.requestFocus('childCommentInput');
             }
           }
         })
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+
+      // 顶栏悬浮层（返回 + 问题名 + ⋮），随 List 滚动跟手显隐
+      ContentTopBar({
+        title: this.questionTitle,
+        contentProgress: this.contentProgress,
+        offsetY: this.topBarOffsetY,
+        menuItems: [
+          { value: '评论', action: () => this.openComments() },
+          { value: '在知乎中打开', action: () => this.openInZhihuApp() },
+          { value: '分享', action: () => this.systemShare() },
+          { value: '网页版', action: () => this.openWebVersion() },
+          { value: '日志', action: () => this.openQuestionLog() }
+        ],
+        onBack: () => {
+          router.back({ url: '' });
+        },
+        onHeightChange: (h: number) => {
+          this.topBarHeight = h;
+        }
+      })
+      .position({ x: 0, y: 0 })
+      .zIndex(40)
     }
     .width('100%')
     .height('100%')

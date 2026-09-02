@@ -17,8 +17,18 @@ const SHOW_THUMBNAIL_KEY: string = 'show_thumbnail';
 const SHOW_THUMBNAIL_STORAGE_KEY: string = 'showThumbnail';
 const SHOW_REFRESH_FAB_KEY: string = 'show_refresh_fab';
 const SHOW_REFRESH_FAB_STORAGE_KEY: string = 'showRefreshFab';
+// 回答页「跳转下一个回答」可拖动按钮（对齐安卓 buttonSkipAnswer / autoHideSkipAnswerButton，默认开）
+const BUTTON_SKIP_ANSWER_KEY: string = 'button_skip_answer';
+const BUTTON_SKIP_ANSWER_STORAGE_KEY: string = 'buttonSkipAnswer';
+const AUTO_HIDE_SKIP_ANSWER_KEY: string = 'auto_hide_skip_answer_button';
+const AUTO_HIDE_SKIP_ANSWER_STORAGE_KEY: string = 'autoHideSkipAnswerButton';
+const AUTO_HIDE_REFRESH_FAB_KEY: string = 'auto_hide_refresh_fab';
+const AUTO_HIDE_REFRESH_FAB_STORAGE_KEY: string = 'autoHideRefreshFab';
 const LIGHT_CARD_WHITE_KEY: string = 'light_card_white';
 const LIGHT_CARD_WHITE_STORAGE_KEY: string = 'lightCardWhite';
+// 实验开关：沉浸光感顶栏（uiMaterial / @kit.ArkUI，仅鸿蒙7+/API26+ 支持，不支持时自动回退到原玻璃顶栏）
+const ENABLE_HDS_TOP_BAR_KEY: string = 'enable_hds_top_bar';
+const ENABLE_HDS_TOP_BAR_STORAGE_KEY: string = 'enableHdsTopBar';
 // 搜索界面：热搜显示开关 / 搜索历史记录开关（key 与安卓 SettingsStore 完全一致，便于跨平台同步）
 const SHOW_SEARCH_HOT_SEARCH_KEY: string = 'showSearchHotSearch';
 const SHOW_SEARCH_HOT_SEARCH_STORAGE_KEY: string = 'showSearchHotSearch';
@@ -54,7 +64,11 @@ export class AppearanceSettingsRepository {
   private static oledBlack: boolean = false;
   private static showThumbnail: boolean = true;
   private static showRefreshFab: boolean = false;
+  private static autoHideRefreshFab: boolean = false;
+  private static buttonSkipAnswer: boolean = true;
+  private static autoHideSkipAnswerButton: boolean = true;
   private static lightCardWhite: boolean = false;
+  private static enableHdsTopBar: boolean = false;
   private static showSearchHotSearch: boolean = true;
   private static showSearchHistory: boolean = true;
   private static readerFontScale: number = 100;
@@ -103,9 +117,33 @@ export class AppearanceSettingsRepository {
     }
   }
 
+  private static updateButtonSkipAnswerAppStorage(value: boolean): void {
+    if (!AppStorage.set<boolean>(BUTTON_SKIP_ANSWER_STORAGE_KEY, value)) {
+      AppStorage.setOrCreate<boolean>(BUTTON_SKIP_ANSWER_STORAGE_KEY, value);
+    }
+  }
+
+  private static updateAutoHideSkipAnswerAppStorage(value: boolean): void {
+    if (!AppStorage.set<boolean>(AUTO_HIDE_SKIP_ANSWER_STORAGE_KEY, value)) {
+      AppStorage.setOrCreate<boolean>(AUTO_HIDE_SKIP_ANSWER_STORAGE_KEY, value);
+    }
+  }
+
+  private static updateAutoHideRefreshFabAppStorage(value: boolean): void {
+    if (!AppStorage.set<boolean>(AUTO_HIDE_REFRESH_FAB_STORAGE_KEY, value)) {
+      AppStorage.setOrCreate<boolean>(AUTO_HIDE_REFRESH_FAB_STORAGE_KEY, value);
+    }
+  }
+
   private static updateLightCardWhiteAppStorage(value: boolean): void {
     if (!AppStorage.set<boolean>(LIGHT_CARD_WHITE_STORAGE_KEY, value)) {
       AppStorage.setOrCreate<boolean>(LIGHT_CARD_WHITE_STORAGE_KEY, value);
+    }
+  }
+
+  private static updateEnableHdsTopBarAppStorage(value: boolean): void {
+    if (!AppStorage.set<boolean>(ENABLE_HDS_TOP_BAR_STORAGE_KEY, value)) {
+      AppStorage.setOrCreate<boolean>(ENABLE_HDS_TOP_BAR_STORAGE_KEY, value);
     }
   }
 
@@ -200,7 +238,11 @@ export class AppearanceSettingsRepository {
       this.oledBlack = (store.getSync(OLED_BLACK_KEY, false)) as boolean;
       this.showThumbnail = (store.getSync(SHOW_THUMBNAIL_KEY, true)) as boolean;
       this.showRefreshFab = (store.getSync(SHOW_REFRESH_FAB_KEY, false)) as boolean;
+      this.autoHideRefreshFab = (store.getSync(AUTO_HIDE_REFRESH_FAB_KEY, false)) as boolean;
+      this.buttonSkipAnswer = (store.getSync(BUTTON_SKIP_ANSWER_KEY, true)) as boolean;
+      this.autoHideSkipAnswerButton = (store.getSync(AUTO_HIDE_SKIP_ANSWER_KEY, true)) as boolean;
       this.lightCardWhite = (store.getSync(LIGHT_CARD_WHITE_KEY, false)) as boolean;
+      this.enableHdsTopBar = (store.getSync(ENABLE_HDS_TOP_BAR_KEY, false)) as boolean;
       this.showSearchHotSearch = (store.getSync(SHOW_SEARCH_HOT_SEARCH_KEY, true)) as boolean;
       this.showSearchHistory = (store.getSync(SHOW_SEARCH_HISTORY_KEY, true)) as boolean;
       this.readerFontScale = (store.getSync(READER_FONT_SCALE_KEY, 100)) as number;
@@ -217,7 +259,11 @@ export class AppearanceSettingsRepository {
     this.updateOledBlackAppStorage(this.oledBlack);
     this.updateShowThumbnailAppStorage(this.showThumbnail);
     this.updateShowRefreshFabAppStorage(this.showRefreshFab);
+    this.updateAutoHideRefreshFabAppStorage(this.autoHideRefreshFab);
+    this.updateButtonSkipAnswerAppStorage(this.buttonSkipAnswer);
+    this.updateAutoHideSkipAnswerAppStorage(this.autoHideSkipAnswerButton);
     this.updateLightCardWhiteAppStorage(this.lightCardWhite);
+    this.updateEnableHdsTopBarAppStorage(this.enableHdsTopBar);
     this.updateShowSearchHotSearchAppStorage(this.showSearchHotSearch);
     this.updateShowSearchHistoryAppStorage(this.showSearchHistory);
     this.applyColorMode(context, this.themeMode);
@@ -332,6 +378,51 @@ export class AppearanceSettingsRepository {
     return value;
   }
 
+  static getAutoHideRefreshFab(context: common.Context): boolean {
+    this.load(context);
+    return this.autoHideRefreshFab;
+  }
+
+  static setAutoHideRefreshFab(context: common.Context, value: boolean): boolean {
+    this.autoHideRefreshFab = value;
+    this.initialized = true;
+    const store = this.preferences(context);
+    store.putSync(AUTO_HIDE_REFRESH_FAB_KEY, value);
+    store.flushSync();
+    this.updateAutoHideRefreshFabAppStorage(value);
+    return value;
+  }
+
+  static getButtonSkipAnswer(context: common.Context): boolean {
+    this.load(context);
+    return this.buttonSkipAnswer;
+  }
+
+  static setButtonSkipAnswer(context: common.Context, value: boolean): boolean {
+    this.buttonSkipAnswer = value;
+    this.initialized = true;
+    const store = this.preferences(context);
+    store.putSync(BUTTON_SKIP_ANSWER_KEY, value);
+    store.flushSync();
+    this.updateButtonSkipAnswerAppStorage(value);
+    return value;
+  }
+
+  static getAutoHideSkipAnswerButton(context: common.Context): boolean {
+    this.load(context);
+    return this.autoHideSkipAnswerButton;
+  }
+
+  static setAutoHideSkipAnswerButton(context: common.Context, value: boolean): boolean {
+    this.autoHideSkipAnswerButton = value;
+    this.initialized = true;
+    const store = this.preferences(context);
+    store.putSync(AUTO_HIDE_SKIP_ANSWER_KEY, value);
+    store.flushSync();
+    this.updateAutoHideSkipAnswerAppStorage(value);
+    return value;
+  }
+
   static getLightCardWhite(context: common.Context): boolean {
     this.load(context);
     return this.lightCardWhite;
@@ -344,6 +435,22 @@ export class AppearanceSettingsRepository {
     store.putSync(LIGHT_CARD_WHITE_KEY, value);
     store.flushSync();
     this.updateLightCardWhiteAppStorage(value);
+    return value;
+  }
+
+  // ===== 实验开关：沉浸光感顶栏（uiMaterial，仅鸿蒙7+/API26+，不支持自动回退） =====
+  static getEnableHdsTopBar(context: common.Context): boolean {
+    this.load(context);
+    return this.enableHdsTopBar;
+  }
+
+  static setEnableHdsTopBar(context: common.Context, value: boolean): boolean {
+    this.enableHdsTopBar = value;
+    this.initialized = true;
+    const store = this.preferences(context);
+    store.putSync(ENABLE_HDS_TOP_BAR_KEY, value);
+    store.flushSync();
+    this.updateEnableHdsTopBarAppStorage(value);
     return value;
   }
 
@@ -436,6 +543,11 @@ export const APPEARANCE_KEYS = {
   oledBlack: OLED_BLACK_KEY,
   showThumbnail: SHOW_THUMBNAIL_KEY,
   showRefreshFab: SHOW_REFRESH_FAB_KEY,
+  autoHideRefreshFab: AUTO_HIDE_REFRESH_FAB_KEY,
+  buttonSkipAnswer: BUTTON_SKIP_ANSWER_KEY,
+  autoHideSkipAnswerButton: AUTO_HIDE_SKIP_ANSWER_KEY,
+  lightCardWhite: LIGHT_CARD_WHITE_KEY,
+  enableHdsTopBar: ENABLE_HDS_TOP_BAR_KEY,
   readerFontScale: READER_FONT_SCALE_KEY,
   readerLineHeight: READER_LINE_HEIGHT_KEY,
   readerParaSpacing: READER_PARA_SPACING_KEY

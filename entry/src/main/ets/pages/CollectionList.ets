@@ -5,6 +5,7 @@ import { CollectionService } from '../services/CollectionService';
 import { ZhihuCollection, ZhihuSessionData, SessionSnapshot, DEFAULT_SESSION_SNAPSHOT } from '../models/ZhihuModels';
 import { ZhihuSessionRepository } from '../services/ZhihuSessionRepository';
 import { ThemeColors } from '../services/ThemeColors';
+import { PageHeader } from '../components/PageHeader';
 
 function formatCounter(value: number, unit: string): string {
   if (value >= 10000) {
@@ -18,6 +19,7 @@ function formatCounter(value: number, unit: string): string {
 struct CollectionList {
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
   @StorageProp('bottomSafeAreaVp') private bottomSafeAreaVp: number = 0;
+  @State topBarHeight: number = 0;
   @StorageProp('themeMode') private themeMode: AppearanceThemeMode = 'system';
   @StorageProp('sessionSnapshot') private sessionSnapshot: SessionSnapshot = DEFAULT_SESSION_SNAPSHOT;
   @StorageLink('oledBlack') private oledBlack: boolean = false;
@@ -385,11 +387,16 @@ struct CollectionList {
   }
 
   build() {
-    Stack() {
-      Column() {
-        this.TopBar()
+    Stack({ alignContent: Alignment.Top }) {
+      // ===== 背景内容层：List 直接放 Stack，顶到最上面 =====
+      List({ space: 12 }) {
+        // 顶部让位占位（同通知页写法）：滚动时内容钻到顶栏底下，模糊生效
+        ListItem() {
+          Column()
+            .width('100%')
+            .height(this.topBarHeight)
+        }
 
-        List({ space: 12 }) {
         ForEach(this.collections, (collection: ZhihuCollection) => {
           ListItem() {
             this.CollectionCard(collection);
@@ -401,20 +408,24 @@ struct CollectionList {
         }
       }
       .width('100%')
-      .layoutWeight(1)
+      .height('100%')
       .scrollBar(BarState.Off)
       .edgeEffect(EdgeEffect.Spring)
       .onReachEnd(() => {
         this.loadMore();
       })
-      .padding({ left: 16, right: 16, top: 12 })
-      }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+      .padding({ left: 16, right: 16 })
 
-      // 右下角创建收藏夹按钮（安卓方形 + 居中加号）
+      // ===== 浮层顶栏 =====
+      PageHeader({ title: '我的收藏夹' })
+        .zIndex(2)
+        .onAreaChange((_old: Area, newValue: Area) => {
+          if (newValue.height > 0 && Number(newValue.height) !== this.topBarHeight) {
+            this.topBarHeight = Number(newValue.height);
+          }
+        })
+
+      // 右下角创建收藏夹按钮
       if (this.urlToken.length > 0) {
         Column() {
           Text('＋')
@@ -439,5 +450,7 @@ struct CollectionList {
     }
     .width('100%')
     .height('100%')
+    .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 }

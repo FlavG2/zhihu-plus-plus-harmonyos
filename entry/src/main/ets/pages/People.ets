@@ -2,6 +2,8 @@ import common from '@ohos.app.ability.common';
 import { promptAction, router, LengthMetrics } from '@kit.ArkUI';
 import { AppearanceThemeMode } from '../services/AppearanceSettingsRepository';
 import { ThemeColors } from '../services/ThemeColors';
+import { ContentCard } from '../components/ContentCard';
+import { PageHeader } from '../components/PageHeader';
 import {
   HomeFeedItem,
   SessionSnapshot,
@@ -45,6 +47,9 @@ const DEFAULT_TAB_STATE: TabLoadState = {
   nextUrl: ''
 };
 
+// 独立吸顶 Tab 栏的内容高度（不含状态栏避让），编译期确定，不走测量
+const PROFILE_TAB_BAR_CONTENT_HEIGHT: number = 48;
+
 function formatCounter(value: number, unit: string): string {
   if (value >= 10000) {
     return `${(value / 10000).toFixed(value >= 100000 ? 0 : 1)} 万${unit}`;
@@ -59,6 +64,18 @@ function errMsg(error: Object): string {
 @Entry
 @Component
 struct People {
+  @StorageProp('cardPadding') private cardPadding: number = 16;
+  @StorageProp('buttonRadius') private buttonRadius: number = 20;
+  @StorageProp('pillRadius') private pillRadius: number = 18;
+  @StorageProp('cardRadius') private cardRadius: number = 16;
+  @StorageProp('fontSymbol') private fontSymbol: string = '24fp';
+  @StorageProp('fontHeading') private fontHeading: string = '20fp';
+  @StorageProp('fontSubhead') private fontSubhead: string = '18fp';
+  @StorageProp('fontBody') private fontBody: string = '16fp';
+  @StorageProp('fontSecondary') private fontSecondary: string = '14fp';
+  @StorageProp('fontMeta') private fontMeta: string = '13fp';
+  @StorageProp('fontCaption') private fontCaption: string = '12fp';
+  @StorageProp('fontTitle') private fontTitle: string = '22fp';
   @StorageProp('topSafeAreaVp') private topSafeAreaVp: number = 0;
   @StorageProp('bottomSafeAreaVp') private bottomSafeAreaVp: number = 0;
   @StorageProp('themeMode') private themeMode: AppearanceThemeMode = 'system';
@@ -103,8 +120,15 @@ struct People {
   @State private subQuestions: ZhihuFollowedQuestionSummary[] = [];
   @State private subCollections: ZhihuCollection[] = [];
 
-  // 个人卡片（头像+统计+操作按钮）随滚动折叠：到顶显示、下滚隐藏
-  @State private profileHeaderVisible: boolean = true;
+  // 折叠顶栏（collapsing toolbar）：浮层 Header（顶栏+名片）整体随滚动上移收起；
+  // 列表仅正常滚动、不改自身布局，规避之前二段式折叠的耦合死锁/滞后/重影。
+  // 浮层头总高 = PageHeader 实测高 + 名片区实测高（build() 内两个独立 onAreaChange 测量点），
+  // 且浮层头显式 .height(总高)，保证"实际渲染高度"与"参与偏移计算的值"恒等——
+  // 名片异步加载导致的高度变化由名片自己的 onAreaChange 同步传导。
+  @State private headerOffset: number = 0;        // 当前收起量（0=全展开，=headerHeight() 时整块收完）
+  @State private pageHeaderHeight: number = 0;    // PageHeader 实测高（含状态栏）
+  @State private profileCardHeight: number = 0;   // 名片区实测高（加载/错误/正文三态各自正确）
+  @State private sortBarHeight: number = 0;      // 排序条（回答/文章）实测高，用于 ProfileTopSpacer 补偿
 
   private readonly tabTitles: string[] = ['回答', '文章', '动态', '收藏', '提问', '想法', '专栏', '粉丝', '关注', '关注订阅'];
   private readonly subTitles: string[] = ['我订阅的专栏', '关注的话题', '关注的问题', '关注的收藏夹'];
@@ -124,6 +148,21 @@ struct People {
   private readonly subTopicsScroller: ListScroller = new ListScroller();
   private readonly subQuestionsScroller: ListScroller = new ListScroller();
   private readonly subCollectionsScroller: ListScroller = new ListScroller();
+
+  // PageHeader 高度兜底（spaceMd 12 + 返回键 36 + spaceMd 12 + 状态栏），实测值优先
+  private pageHeaderBarHeight(): number {
+    return this.pageHeaderHeight > 0 ? this.pageHeaderHeight : (this.topSafeAreaVp + 60);
+  }
+
+  // 名片区高度兜底：首帧测量前按加载态占位高度估算
+  private cardHeight(): number {
+    return this.profileCardHeight > 0 ? this.profileCardHeight : 120;
+  }
+
+  // 浮层 Header 总高（含状态栏）= PageHeader 实测 + 名片实测
+  private headerHeight(): number {
+    return this.pageHeaderBarHeight() + this.cardHeight();
+  }
 
   aboutToAppear(): void {
     const params = router.getParams() as PeoplePageParams;
@@ -611,7 +650,7 @@ struct People {
     Column({ space: 10 }) {
       if (item.title.length > 0) {
         Text(item.title)
-          .fontSize(17)
+          .fontSize(this.fontSubhead)
           .fontWeight(FontWeight.Bold)
           .lineHeight(24)
           .fontColor($r('app.color.text_primary'))
@@ -622,7 +661,7 @@ struct People {
 
       if (item.summary.length > 0) {
         Text(item.summary)
-          .fontSize(13)
+          .fontSize(this.fontMeta)
           .lineHeight(20)
           .fontColor($r('app.color.text_secondary'))
           .maxLines(3)
@@ -632,7 +671,7 @@ struct People {
 
       Row({ space: 10 }) {
         Text(item.details)
-          .fontSize(12)
+          .fontSize(this.fontCaption)
           .fontColor($r('app.color.text_secondary'))
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -643,10 +682,10 @@ struct People {
       .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .padding(16)
+    .padding(this.cardPadding)
     .backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
     .border({ width: 1, color: $r('app.color.card_border') })
-    .borderRadius(18)
+    .borderRadius(this.pillRadius)
     .onClick(() => {
       this.openContent(item);
     })
@@ -657,37 +696,37 @@ struct People {
   private Footer(stateIndex: number): void {
     if (this.tabState(stateIndex).loading && !this.tabState(stateIndex).loaded) {
       Text('正在加载…')
-        .fontSize(13).fontColor($r('app.color.text_secondary'))
+        .fontSize(this.fontMeta).fontColor($r('app.color.text_secondary'))
         .width('100%').textAlign(TextAlign.Center).padding({ top: 24, bottom: 24 })
         .onClick(() => {})
     } else if (this.tabState(stateIndex).error.length > 0 && this.feedCountFor(stateIndex) === 0) {
-      Column({ space: 12 }) {
-        Text(this.tabState(stateIndex).error).fontSize(14).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
+      Column({ space: 8 }) {
+        Text(this.tabState(stateIndex).error).fontSize(this.fontSecondary).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
         Text('重新加载')
-          .fontSize(14).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
+          .fontSize(this.fontSecondary).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
           .padding({ left: 18, right: 18, top: 10, bottom: 10 })
-          .backgroundColor($r('app.color.action_background')).borderRadius(18)
+          .backgroundColor($r('app.color.action_background')).borderRadius(this.pillRadius)
           .onClick(() => { this.loadTab(stateIndex, false); })
       }
       .width('100%').alignItems(HorizontalAlign.Center).padding({ top: 40, bottom: 40 })
     } else if (this.feedCountFor(stateIndex) === 0 && this.tabState(stateIndex).loaded) {
       Text('这里还没有内容')
-        .fontSize(14).fontColor($r('app.color.text_secondary'))
+        .fontSize(this.fontSecondary).fontColor($r('app.color.text_secondary'))
         .width('100%').textAlign(TextAlign.Center).padding({ top: 40, bottom: 40 })
     } else if (this.tabState(stateIndex).loadingMore) {
       Text('正在加载更多…')
-        .fontSize(12).fontColor($r('app.color.text_secondary'))
+        .fontSize(this.fontCaption).fontColor($r('app.color.text_secondary'))
         .width('100%').textAlign(TextAlign.Center).padding({ top: 16, bottom: 16 })
     } else if (this.tabState(stateIndex).isEnd) {
       Text('没有更多了')
-        .fontSize(12).fontColor($r('app.color.text_tertiary'))
+        .fontSize(this.fontCaption).fontColor($r('app.color.text_tertiary'))
         .width('100%').textAlign(TextAlign.Center).padding({ top: 16, bottom: 16 })
     } else {
       Text('加载更多')
-        .fontSize(12).fontColor($r('app.color.action_text'))
+        .fontSize(this.fontCaption).fontColor($r('app.color.action_text'))
         .padding({ left: 14, right: 14, top: 8, bottom: 8 })
         .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
-        .borderRadius(16).border({ width: 1, color: $r('app.color.card_border') })
+        .borderRadius(this.cardRadius).border({ width: 1, color: $r('app.color.card_border') })
         .onClick(() => { this.loadTab(stateIndex, true); })
         .margin({ top: 8, bottom: 8 })
     }
@@ -709,191 +748,212 @@ struct People {
   }
 
   // ---------- 各 tab 列表（无参 Builder，读取对应 @State）----------
+  // 头部占位块：作为每个列表的首个 ListItem 随内容一起滚动，把首批内容顶到
+  // 浮层名片+吸顶 Tab 栏下方。不能用 TabContent 的固定 padding 代替——那会把
+  // 列表视口钉在屏幕下方，顶栏收起后视口与吸顶栏之间会出现随滚动增大的死区
+  // （视口把列表内容裁掉，表现为切换栏下方一片空白且越来越大）。
+  @Builder
+  private ProfileTopSpacer(): void {
+    ListItem() {
+      Column()
+        .width('100%')
+    }
+    .height(this.headerHeight() + PROFILE_TAB_BAR_CONTENT_HEIGHT + (this.selectedTab === 0 || this.selectedTab === 1 ? this.sortBarHeight : 0))
+  }
+
   @Builder
   private AnswersList(): void {
-    List({ space: 12, scroller: this.answersScroller }) {
-      ListItem() { this.AnswersSortBar(); }
+    List({ space: 8, scroller: this.answersScroller }) {
+      this.ProfileTopSpacer()
       ForEach(this.answers, (item: HomeFeedItem) => {
         ListItem() { this.FeedCard(item); }
       }, (item: HomeFeedItem) => item.id)
       ListItem() { this.Footer(0); }
     }
-    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring)
+    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
           .onScroll(this.makeProfileScrollHandler(this.answersScroller))
       .onReachEnd(() => { this.loadAnswers(true); })
-    .padding({ left: 16, right: 16, top: 12 })
+    .padding({ left: 16, right: 16, top: 0 })
   }
 
   @Builder
   private ArticlesList(): void {
-    List({ space: 12, scroller: this.articlesScroller }) {
-      ListItem() { this.ArticlesSortBar(); }
+    List({ space: 8, scroller: this.articlesScroller }) {
+      this.ProfileTopSpacer()
       ForEach(this.articles, (item: HomeFeedItem) => {
         ListItem() { this.FeedCard(item); }
       }, (item: HomeFeedItem) => item.id)
       ListItem() { this.Footer(1); }
     }
-    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring)
+    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
           .onScroll(this.makeProfileScrollHandler(this.articlesScroller))
       .onReachEnd(() => { this.loadArticles(true); })
-    .padding({ left: 16, right: 16, top: 12 })
+    .padding({ left: 16, right: 16, top: 0 })
   }
 
   @Builder
   private ActivitiesList(): void {
-    List({ space: 12, scroller: this.activitiesScroller }) {
+    List({ space: 8, scroller: this.activitiesScroller }) {
+      this.ProfileTopSpacer()
       ForEach(this.activities, (item: HomeFeedItem) => {
         ListItem() { this.FeedCard(item); }
       }, (item: HomeFeedItem) => item.id)
       ListItem() { this.Footer(2); }
     }
-    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring)
+    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
           .onScroll(this.makeProfileScrollHandler(this.activitiesScroller))
       .onReachEnd(() => { this.loadActivities(true); })
-    .padding({ left: 16, right: 16, top: 12 })
+    .padding({ left: 16, right: 16, top: 0 })
   }
 
   @Builder
   private QuestionsList(): void {
-    List({ space: 12, scroller: this.questionsScroller }) {
+    List({ space: 8, scroller: this.questionsScroller }) {
+      this.ProfileTopSpacer()
       ForEach(this.questions, (item: HomeFeedItem) => {
         ListItem() { this.FeedCard(item); }
       }, (item: HomeFeedItem) => item.id)
       ListItem() { this.Footer(4); }
     }
-    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring)
+    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
           .onScroll(this.makeProfileScrollHandler(this.questionsScroller))
       .onReachEnd(() => { this.loadQuestions(true); })
-    .padding({ left: 16, right: 16, top: 12 })
+    .padding({ left: 16, right: 16, top: 0 })
   }
 
   @Builder
   private PinsList(): void {
-    List({ space: 12, scroller: this.pinsScroller }) {
+    List({ space: 8, scroller: this.pinsScroller }) {
+      this.ProfileTopSpacer()
       ForEach(this.pins, (item: HomeFeedItem) => {
         ListItem() { this.FeedCard(item); }
       }, (item: HomeFeedItem) => item.id)
       ListItem() { this.Footer(5); }
     }
-    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring)
+    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
           .onScroll(this.makeProfileScrollHandler(this.pinsScroller))
       .onReachEnd(() => { this.loadPins(true); })
-    .padding({ left: 16, right: 16, top: 12 })
+    .padding({ left: 16, right: 16, top: 0 })
   }
 
   @Builder
   private CollectionsList(): void {
-    List({ space: 12, scroller: this.collectionsScroller }) {
+    List({ space: 8, scroller: this.collectionsScroller }) {
+      this.ProfileTopSpacer()
       ForEach(this.collections, (c: ZhihuCollection) => {
         ListItem() { this.CollectionCard(c); }
       }, (c: ZhihuCollection) => c.id)
       ListItem() { this.Footer(3); }
     }
-    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring)
+    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
           .onScroll(this.makeProfileScrollHandler(this.collectionsScroller))
       .onReachEnd(() => { this.loadCollections(true); })
-    .padding({ left: 16, right: 16, top: 12 })
+    .padding({ left: 16, right: 16, top: 0 })
   }
 
   @Builder
   private ColumnsList(): void {
-    List({ space: 12, scroller: this.columnsScroller }) {
+    List({ space: 8, scroller: this.columnsScroller }) {
+      this.ProfileTopSpacer()
       ForEach(this.columns, (c: ZhihuColumnSummary) => {
         ListItem() { this.ColumnCard(c); }
       }, (c: ZhihuColumnSummary) => c.id)
       ListItem() { this.Footer(6); }
     }
-    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring)
+    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
           .onScroll(this.makeProfileScrollHandler(this.columnsScroller))
       .onReachEnd(() => { this.loadColumns(true); })
-    .padding({ left: 16, right: 16, top: 12 })
+    .padding({ left: 16, right: 16, top: 0 })
   }
 
   @Builder
   private FollowersList(): void {
-    List({ space: 12, scroller: this.followersScroller }) {
+    List({ space: 8, scroller: this.followersScroller }) {
+      this.ProfileTopSpacer()
       ForEach(this.followers, (p: ZhihuPeopleSummary) => {
         ListItem() { this.PersonCard(p); }
       }, (p: ZhihuPeopleSummary) => p.id)
       ListItem() { this.Footer(7); }
     }
-    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring)
+    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
           .onScroll(this.makeProfileScrollHandler(this.followersScroller))
       .onReachEnd(() => { this.loadFollowers(true); })
-    .padding({ left: 16, right: 16, top: 12 })
+    .padding({ left: 16, right: 16, top: 0 })
   }
 
   @Builder
   private FollowingList(): void {
-    List({ space: 12, scroller: this.followingScroller }) {
+    List({ space: 8, scroller: this.followingScroller }) {
+      this.ProfileTopSpacer()
       ForEach(this.following, (p: ZhihuPeopleSummary) => {
         ListItem() { this.PersonCard(p); }
       }, (p: ZhihuPeopleSummary) => p.id)
       ListItem() { this.Footer(8); }
     }
-    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring)
+    .width('100%').height('100%').scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
           .onScroll(this.makeProfileScrollHandler(this.followingScroller))
       .onReachEnd(() => { this.loadFollowing(true); })
-    .padding({ left: 16, right: 16, top: 12 })
+    .padding({ left: 16, right: 16, top: 0 })
   }
 
   // ---------- 收藏夹 / 专栏 / 人物 卡片 ----------
   @Builder
   private CollectionCard(collection: ZhihuCollection): void {
-    Column({ space: 4 }) {
+    ContentCard({ onTap: () => { this.openCollection(collection); } }) {
+      Column({ space: 4 }) {
       Text(collection.title)
-        .fontSize(16).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
+        .fontSize(this.fontBody).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
         .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
       if (collection.description.length > 0) {
         Text(collection.description)
-          .fontSize(13).fontColor($r('app.color.text_secondary'))
+          .fontSize(this.fontMeta).fontColor($r('app.color.text_secondary'))
           .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
       }
-      Row({ space: 12 }) {
-        Text(formatCounter(collection.itemCount, ' 篇内容')).fontSize(12).fontColor($r('app.color.text_secondary'))
+      Row({ space: 8 }) {
+        Text(formatCounter(collection.itemCount, ' 篇内容')).fontSize(this.fontCaption).fontColor($r('app.color.text_secondary'))
         if (collection.likeCount > 0) {
-          Text(formatCounter(collection.likeCount, ' 赞同')).fontSize(12).fontColor($r('app.color.text_secondary'))
+          Text(formatCounter(collection.likeCount, ' 赞同')).fontSize(this.fontCaption).fontColor($r('app.color.text_secondary'))
         }
       }
       .width('100%').alignItems(VerticalAlign.Center)
     }
-    .width('100%').padding(16).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-    .borderRadius(16).border({ width: 1, color: $r('app.color.card_border') })
-    .onClick(() => { this.openCollection(collection); })
+      .width('100%')
+    }
   }
 
   @Builder
   private ColumnCard(column: ZhihuColumnSummary): void {
-    Row({ space: 12 }) {
+    ContentCard({ onTap: () => { this.openColumn(column); } }) {
+      Row({ space: 8 }) {
       Column({ space: 4 }) {
         Text(column.title)
-          .fontSize(16).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
+          .fontSize(this.fontBody).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
           .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
         if (column.description.length > 0) {
           Text(column.description)
-            .fontSize(13).fontColor($r('app.color.text_secondary'))
+            .fontSize(this.fontMeta).fontColor($r('app.color.text_secondary'))
             .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         Text(`${formatCounter(column.articlesCount, ' 文章')} · ${formatCounter(column.followerCount, ' 关注')}`)
-          .fontSize(12).fontColor($r('app.color.text_secondary'))
+          .fontSize(this.fontCaption).fontColor($r('app.color.text_secondary'))
       }
       .layoutWeight(1).alignItems(HorizontalAlign.Start)
     }
-    .width('100%').padding(16).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-    .borderRadius(16).border({ width: 1, color: $r('app.color.card_border') })
-    .onClick(() => { this.openColumn(column); })
+      .width('100%')
+    }
   }
 
   @Builder
   private PersonCard(person: ZhihuPeopleSummary): void {
-    Row({ space: 12 }) {
+    ContentCard({ onTap: () => { this.openPerson(person); } }) {
+      Row({ space: 8 }) {
       if (person.avatarUrl.length > 0) {
         Image(person.avatarUrl)
           .width(48).height(48).objectFit(ImageFit.Cover).borderRadius(24).clip(true)
       } else {
         Column() {
           Text(person.name.slice(0, 1))
-            .fontSize(16).fontWeight(FontWeight.Bold).fontColor($r('app.color.action_text'))
+            .fontSize(this.fontBody).fontWeight(FontWeight.Bold).fontColor($r('app.color.action_text'))
         }
         .width(48).height(48).justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
         .backgroundColor($r('app.color.action_background')).borderRadius(24)
@@ -902,11 +962,11 @@ struct People {
       Column({ space: 4 }) {
         Row({ space: 6 }) {
           Text(person.name)
-            .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
+            .fontSize(this.fontBody).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
             .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
           if (person.officialBadgeTitle.length > 0) {
             Text(person.officialBadgeTitle)
-              .fontSize(11).fontColor($r('app.color.action_text'))
+              .fontSize(this.fontCaption).fontColor($r('app.color.action_text'))
               .padding({ left: 8, right: 8, top: 2, bottom: 2 })
               .backgroundColor($r('app.color.action_background')).borderRadius(10)
               .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -916,53 +976,53 @@ struct People {
 
         if (person.headline.length > 0) {
           Text(person.headline)
-            .fontSize(13).fontColor($r('app.color.text_secondary'))
+            .fontSize(this.fontMeta).fontColor($r('app.color.text_secondary'))
             .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
         }
         Row({ space: 14 }) {
-          Text(`${person.answerCount} 回答`).fontSize(12).fontColor($r('app.color.text_secondary'))
-          Text(`${person.articleCount} 文章`).fontSize(12).fontColor($r('app.color.text_secondary'))
-          Text(`${person.followerCount} 粉丝`).fontSize(12).fontColor($r('app.color.text_secondary'))
+          Text(`${person.answerCount} 回答`).fontSize(this.fontCaption).fontColor($r('app.color.text_secondary'))
+          Text(`${person.articleCount} 文章`).fontSize(this.fontCaption).fontColor($r('app.color.text_secondary'))
+          Text(`${person.followerCount} 粉丝`).fontSize(this.fontCaption).fontColor($r('app.color.text_secondary'))
         }
         .width('100%').padding({ top: 2 })
       }
       .layoutWeight(1).alignItems(HorizontalAlign.Start)
 
       Text('查看')
-        .fontSize(13).fontColor($r('app.color.action_text'))
+        .fontSize(this.fontMeta).fontColor($r('app.color.action_text'))
         .padding({ left: 14, right: 14, top: 6, bottom: 6 })
-        .backgroundColor($r('app.color.action_background')).borderRadius(16)
-        .onClick(() => { this.openPerson(person); })
+        .backgroundColor($r('app.color.action_background')).borderRadius(this.cardRadius)
     }
-    .width('100%').padding(16).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-    .borderRadius(16).border({ width: 1, color: $r('app.color.card_border') })
-    .onClick(() => { this.openPerson(person); })
+      .width('100%')
+    }
   }
 
   // ---------- 关注订阅子页 ----------
+  // 子页分类 chips 作为首个 ListItem 与头部占位块一起随内容滚动（同回答/文章排序条的做法）；
+  // 不能固定在列表上方——那会把子页列表视口钉在下方，重蹈滚动死区。
+  @Builder
+  private SubChipsBar(): void {
+    Row({ space: 8 }) {
+      ForEach(this.subTitles, (title: string, index: number) => {
+        Text(title)
+          .fontSize(this.fontMeta)
+          .fontColor(this.subTab === index ? $r('app.color.action_text') : $r('app.color.text_secondary'))
+          .padding({ left: 14, right: 14, top: 8, bottom: 8 })
+          .backgroundColor(this.subTab === index ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
+          .borderRadius(this.cardRadius)
+          .onClick(() => {
+            this.subTab = index;
+            this.ensureSubLoaded(index);
+          })
+      }, (title: string, index: number) => `${index}-${title}`)
+    }
+    .width('100%')
+    .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+  }
+
   @Builder
   private SubscriptionsContent(): void {
     Column() {
-      Scroll() {
-        Row({ space: 8 }) {
-          ForEach(this.subTitles, (title: string, index: number) => {
-            Text(title)
-              .fontSize(13)
-              .fontColor(this.subTab === index ? $r('app.color.action_text') : $r('app.color.text_secondary'))
-              .padding({ left: 14, right: 14, top: 8, bottom: 8 })
-              .backgroundColor(this.subTab === index ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
-              .borderRadius(16)
-              .onClick(() => {
-                this.subTab = index;
-                this.ensureSubLoaded(index);
-              })
-          }, (title: string, index: number) => `${index}-${title}`)
-        }
-        .padding({ left: 16, right: 16, top: 8, bottom: 8 })
-      }
-      .scrollable(ScrollDirection.Horizontal)
-      .scrollBar(BarState.Off)
-
       if (this.subTab === 0) {
         this.SubColumnsList()
       } else if (this.subTab === 1) {
@@ -978,116 +1038,124 @@ struct People {
 
   @Builder
   private SubColumnsList(): void {
-    List({ space: 12, scroller: this.subColumnsScroller }) {
+    List({ space: 8, scroller: this.subColumnsScroller }) {
+      this.ProfileTopSpacer()
+      ListItem() { this.SubChipsBar(); }
       ForEach(this.subColumns, (c: ZhihuColumnSummary) => {
         ListItem() { this.ColumnCard(c); }
       }, (c: ZhihuColumnSummary) => c.id)
       ListItem() { this.SubFooter(0); }
     }
-    .width('100%').layoutWeight(1).scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring)
+    .width('100%').layoutWeight(1).scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
           .onScroll(this.makeProfileScrollHandler(this.subColumnsScroller))
       .onReachEnd(() => { this.loadSubColumns(true); })
-    .padding({ left: 16, right: 16, top: 12 })
+    .padding({ left: 16, right: 16, top: 0 })
   }
 
   @Builder
   private SubTopicsList(): void {
-    List({ space: 12, scroller: this.subTopicsScroller }) {
+    List({ space: 8, scroller: this.subTopicsScroller }) {
+      this.ProfileTopSpacer()
+      ListItem() { this.SubChipsBar(); }
       ForEach(this.subTopics, (t: ZhihuTopicSummary) => {
         ListItem() { this.TopicCard(t); }
       }, (t: ZhihuTopicSummary) => t.id)
       ListItem() { this.SubFooter(1); }
     }
-    .width('100%').layoutWeight(1).scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring)
+    .width('100%').layoutWeight(1).scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
           .onScroll(this.makeProfileScrollHandler(this.subTopicsScroller))
       .onReachEnd(() => { this.loadSubTopics(true); })
-    .padding({ left: 16, right: 16, top: 12 })
+    .padding({ left: 16, right: 16, top: 0 })
   }
 
   @Builder
   private SubQuestionsList(): void {
-    List({ space: 12, scroller: this.subQuestionsScroller }) {
+    List({ space: 8, scroller: this.subQuestionsScroller }) {
+      this.ProfileTopSpacer()
+      ListItem() { this.SubChipsBar(); }
       ForEach(this.subQuestions, (q: ZhihuFollowedQuestionSummary) => {
         ListItem() { this.FollowedQuestionCard(q); }
       }, (q: ZhihuFollowedQuestionSummary) => q.id)
       ListItem() { this.SubFooter(2); }
     }
-    .width('100%').layoutWeight(1).scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring)
+    .width('100%').layoutWeight(1).scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
           .onScroll(this.makeProfileScrollHandler(this.subQuestionsScroller))
       .onReachEnd(() => { this.loadSubQuestions(true); })
-    .padding({ left: 16, right: 16, top: 12 })
+    .padding({ left: 16, right: 16, top: 0 })
   }
 
   @Builder
   private SubCollectionsList(): void {
-    List({ space: 12, scroller: this.subCollectionsScroller }) {
+    List({ space: 8, scroller: this.subCollectionsScroller }) {
+      this.ProfileTopSpacer()
+      ListItem() { this.SubChipsBar(); }
       ForEach(this.subCollections, (c: ZhihuCollection) => {
         ListItem() { this.CollectionCard(c); }
       }, (c: ZhihuCollection) => c.id)
       ListItem() { this.SubFooter(3); }
     }
-    .width('100%').layoutWeight(1).scrollBar(BarState.Off).edgeEffect(EdgeEffect.Spring)
+    .width('100%').layoutWeight(1).scrollBar(BarState.Off).edgeEffect(EdgeEffect.None)
           .onScroll(this.makeProfileScrollHandler(this.subCollectionsScroller))
       .onReachEnd(() => { this.loadSubCollections(true); })
-    .padding({ left: 16, right: 16, top: 12 })
+    .padding({ left: 16, right: 16, top: 0 })
   }
 
   @Builder
   private TopicCard(topic: ZhihuTopicSummary): void {
-    Row({ space: 12 }) {
+    Row({ space: 8 }) {
       if (topic.avatarUrl.length > 0) {
-        Image(topic.avatarUrl).width(40).height(40).objectFit(ImageFit.Cover).borderRadius(20).clip(true)
+        Image(topic.avatarUrl).width(40).height(40).objectFit(ImageFit.Cover).borderRadius(this.buttonRadius).clip(true)
       }
       Text(topic.name)
-        .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
+        .fontSize(this.fontBody).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
         .layoutWeight(1).maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
     }
-    .width('100%').padding(16).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-    .borderRadius(16).border({ width: 1, color: $r('app.color.card_border') })
+    .width('100%').padding(this.cardPadding).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+    .borderRadius(this.cardRadius).border({ width: 1, color: $r('app.color.card_border') })
     .onClick(() => { this.openTopic(topic); })
   }
 
   @Builder
   private FollowedQuestionCard(question: ZhihuFollowedQuestionSummary): void {
     Text(question.title)
-      .fontSize(16).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
+      .fontSize(this.fontBody).fontWeight(FontWeight.Medium).fontColor($r('app.color.text_primary'))
       .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
-      .width('100%').padding(16).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-      .borderRadius(16).border({ width: 1, color: $r('app.color.card_border') })
+      .width('100%').padding(this.cardPadding).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+      .borderRadius(this.cardRadius).border({ width: 1, color: $r('app.color.card_border') })
       .onClick(() => { this.openFollowedQuestion(question); })
   }
 
   @Builder
   private SubFooter(stateIndex: number): void {
     if (this.subState(stateIndex).loading && !this.subState(stateIndex).loaded) {
-      Text('正在加载…').fontSize(13).fontColor($r('app.color.text_secondary'))
+      Text('正在加载…').fontSize(this.fontMeta).fontColor($r('app.color.text_secondary'))
         .width('100%').textAlign(TextAlign.Center).padding({ top: 24, bottom: 24 })
     } else if (this.subState(stateIndex).error.length > 0 && this.subItemCount(stateIndex) === 0) {
-      Column({ space: 12 }) {
-        Text(this.subState(stateIndex).error).fontSize(14).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
+      Column({ space: 8 }) {
+        Text(this.subState(stateIndex).error).fontSize(this.fontSecondary).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
         Text('重新加载')
-          .fontSize(14).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
+          .fontSize(this.fontSecondary).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
           .padding({ left: 18, right: 18, top: 10, bottom: 10 })
-          .backgroundColor($r('app.color.action_background')).borderRadius(18)
+          .backgroundColor($r('app.color.action_background')).borderRadius(this.pillRadius)
           .onClick(() => { this.loadSubTab(stateIndex, false); })
       }
       .width('100%').alignItems(HorizontalAlign.Center).padding({ top: 40, bottom: 40 })
     } else if (this.subItemCount(stateIndex) === 0 && this.subState(stateIndex).loaded) {
       Text('这里还没有内容')
-        .fontSize(14).fontColor($r('app.color.text_secondary'))
+        .fontSize(this.fontSecondary).fontColor($r('app.color.text_secondary'))
         .width('100%').textAlign(TextAlign.Center).padding({ top: 40, bottom: 40 })
     } else if (this.subState(stateIndex).loadingMore) {
-      Text('正在加载更多…').fontSize(12).fontColor($r('app.color.text_secondary'))
+      Text('正在加载更多…').fontSize(this.fontCaption).fontColor($r('app.color.text_secondary'))
         .width('100%').textAlign(TextAlign.Center).padding({ top: 16, bottom: 16 })
     } else if (this.subState(stateIndex).isEnd) {
-      Text('没有更多了').fontSize(12).fontColor($r('app.color.text_tertiary'))
+      Text('没有更多了').fontSize(this.fontCaption).fontColor($r('app.color.text_tertiary'))
         .width('100%').textAlign(TextAlign.Center).padding({ top: 16, bottom: 16 })
     } else {
       Text('加载更多')
-        .fontSize(12).fontColor($r('app.color.action_text'))
+        .fontSize(this.fontCaption).fontColor($r('app.color.action_text'))
         .padding({ left: 14, right: 14, top: 8, bottom: 8 })
         .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
-        .borderRadius(16).border({ width: 1, color: $r('app.color.card_border') })
+        .borderRadius(this.cardRadius).border({ width: 1, color: $r('app.color.card_border') })
         .onClick(() => { this.loadSubTab(stateIndex, true); })
         .margin({ top: 8, bottom: 8 })
     }
@@ -1108,15 +1176,15 @@ struct People {
   private ProfileHeader(): void {
     if (this.profileLoading) {
       Text('正在加载个人资料…')
-        .fontSize(14).fontColor($r('app.color.text_secondary'))
+        .fontSize(this.fontSecondary).fontColor($r('app.color.text_secondary'))
         .width('100%').textAlign(TextAlign.Center).padding({ top: 40, bottom: 40 })
     } else if (this.profileError.length > 0) {
-      Column({ space: 12 }) {
-        Text(this.profileError).fontSize(14).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
+      Column({ space: 8 }) {
+        Text(this.profileError).fontSize(this.fontSecondary).fontColor($r('app.color.error_text')).textAlign(TextAlign.Center)
         Text('重新加载')
-          .fontSize(14).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
+          .fontSize(this.fontSecondary).fontWeight(FontWeight.Medium).fontColor($r('app.color.action_text'))
           .padding({ left: 18, right: 18, top: 10, bottom: 10 })
-          .backgroundColor($r('app.color.action_background')).borderRadius(18)
+          .backgroundColor($r('app.color.action_background')).borderRadius(this.pillRadius)
           .onClick(() => { this.loadProfile(); })
       }
       .width('100%').alignItems(HorizontalAlign.Center).padding({ top: 40, bottom: 40 })
@@ -1127,7 +1195,7 @@ struct People {
 
   @Builder
   private ProfileBody(): void {
-    Column({ space: 12 }) {
+    Column({ space: 8 }) {
       Row({ space: 16 }) {
         if (this.profile!.avatarUrl.length > 0) {
           Image(this.profile!.avatarUrl)
@@ -1135,7 +1203,7 @@ struct People {
         } else {
           Column() {
             Text(this.profile!.name.slice(0, 1))
-              .fontSize(28).fontWeight(FontWeight.Bold).fontColor($r('app.color.action_text'))
+              .fontSize(this.fontSymbol).fontWeight(FontWeight.Bold).fontColor($r('app.color.action_text'))
           }
           .width(80).height(80).justifyContent(FlexAlign.Center).alignItems(HorizontalAlign.Center)
           .backgroundColor($r('app.color.action_background')).borderRadius(40)
@@ -1144,11 +1212,11 @@ struct People {
         Column({ space: 6 }) {
           Row({ space: 6 }) {
             Text(this.profile!.name)
-              .fontSize(20).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
+              .fontSize(this.fontHeading).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
               .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
             if (this.profile!.officialBadgeTitle.length > 0) {
               Text(this.profile!.officialBadgeTitle)
-                .fontSize(11).fontColor($r('app.color.action_text'))
+                .fontSize(this.fontCaption).fontColor($r('app.color.action_text'))
                 .padding({ left: 8, right: 8, top: 2, bottom: 2 })
                 .backgroundColor($r('app.color.action_background')).borderRadius(10)
                 .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -1158,7 +1226,7 @@ struct People {
 
           if (this.profile!.headline.length > 0) {
             Text(this.profile!.headline)
-              .fontSize(13).fontColor($r('app.color.text_secondary'))
+              .fontSize(this.fontMeta).fontColor($r('app.color.text_secondary'))
               .maxLines(2).textOverflow({ overflow: TextOverflow.Ellipsis })
           }
 
@@ -1168,7 +1236,7 @@ struct People {
                 Image(badge.iconUrl).width(16).height(16).objectFit(ImageFit.Contain)
               }
               Text(`${badge.title}：${badge.description}`)
-                .fontSize(12).fontColor($r('app.color.text_secondary'))
+                .fontSize(this.fontCaption).fontColor($r('app.color.text_secondary'))
                 .maxLines(1).textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
             }
             .width('100%').alignItems(VerticalAlign.Center)
@@ -1180,10 +1248,10 @@ struct People {
                 Image(this.profile!.githubSocial.iconUrl).width(16).height(16).objectFit(ImageFit.Contain)
               }
               Text(this.profile!.githubSocial.title)
-                .fontSize(12).fontColor($r('app.color.text_secondary')).maxLines(1)
+                .fontSize(this.fontCaption).fontColor($r('app.color.text_secondary')).maxLines(1)
                 .textOverflow({ overflow: TextOverflow.Ellipsis }).layoutWeight(1)
               Text(`· ${this.profile!.githubSocial.starCount} stars`)
-                .fontSize(12).fontColor($r('app.color.text_secondary')).maxLines(1)
+                .fontSize(this.fontCaption).fontColor($r('app.color.text_secondary')).maxLines(1)
             }
             .width('100%').alignItems(VerticalAlign.Center)
             .onClick(() => { this.openWeb(this.profile!.githubSocial!.title, this.profile!.githubSocial!.profileUrl); })
@@ -1192,9 +1260,9 @@ struct People {
         .layoutWeight(1).alignItems(HorizontalAlign.Start)
 
         // 右上角：搜索 TA 的创作（对齐安卓，而非全站搜索）
-        Image($r('app.media.ic_search'))
-          .width(22).height(22).renderMode(ImageRenderMode.Template)
-          .fillColor($r('app.color.text_secondary')).syncLoad(true)
+        SymbolGlyph($r('sys.symbol.magnifyingglass'))
+          .fontSize(this.fontTitle)
+          .fontColor([$r('app.color.text_secondary')])
           .onClick(() => {
             router.pushUrl({
               url: 'pages/Search',
@@ -1219,55 +1287,55 @@ struct People {
         Flex({ wrap: FlexWrap.Wrap, space: { main: LengthMetrics.vp(10), cross: LengthMetrics.vp(10) } }) {
           // 关注：蓝胶囊=可关注，灰胶囊=已关注（中性，明确区分）
           Text(this.profile!.isFollowing ? '已关注' : '关注')
-            .fontSize(14)
+            .fontSize(this.fontSecondary)
             .fontColor(this.profile!.isFollowing ? $r('app.color.text_secondary') : $r('app.color.action_text'))
             .padding({ left: 18, right: 18, top: 8, bottom: 8 })
             .backgroundColor(this.profile!.isFollowing ? ThemeColors.cardBackground(this.oledBlack, this.isDark) : $r('app.color.action_background'))
             .border({ width: 1, color: this.profile!.isFollowing ? $r('app.color.card_border') : $r('app.color.action_background') })
-            .borderRadius(18)
+            .borderRadius(this.pillRadius)
             .onClick(() => { this.doToggleFollow(); })
           // 拉黑：红=已拉黑，灰描边=未拉黑
           Text(this.profile!.isBlocking ? '已拉黑' : '拉黑')
-            .fontSize(14)
+            .fontSize(this.fontSecondary)
             .fontColor(this.profile!.isBlocking ? '#E24B4A' : $r('app.color.text_secondary'))
             .padding({ left: 18, right: 18, top: 8, bottom: 8 })
             .backgroundColor(this.profile!.isBlocking ? '#FCEBEB' : ThemeColors.cardBackground(this.oledBlack, this.isDark))
             .border({ width: 1, color: this.profile!.isBlocking ? '#E24B4A' : $r('app.color.card_border') })
-            .borderRadius(18)
+            .borderRadius(this.pillRadius)
             .onClick(() => { this.doToggleBlock(); })
           // 屏蔽推荐（本地，对齐安卓 isUserBlocked）
           Text(this.blockedInRecommendations ? '取消屏蔽推荐' : '屏蔽推荐')
-            .fontSize(14)
+            .fontSize(this.fontSecondary)
             .fontColor(this.blockedInRecommendations ? '#E24B4A' : $r('app.color.text_secondary'))
             .padding({ left: 18, right: 18, top: 8, bottom: 8 })
             .backgroundColor(this.blockedInRecommendations ? '#FCEBEB' : ThemeColors.cardBackground(this.oledBlack, this.isDark))
             .border({ width: 1, color: this.blockedInRecommendations ? '#E24B4A' : $r('app.color.card_border') })
-            .borderRadius(18)
+            .borderRadius(this.pillRadius)
             .onClick(() => { this.doToggleRecommendationBlock(); })
           // 屏蔽提问者（本地，对齐安卓 isQuestionAuthorBlocked）
           Text(this.blockedAsQuestionAuthor ? '取消屏蔽提问者' : '屏蔽提问者')
-            .fontSize(14)
+            .fontSize(this.fontSecondary)
             .fontColor(this.blockedAsQuestionAuthor ? '#E24B4A' : $r('app.color.text_secondary'))
             .padding({ left: 18, right: 18, top: 8, bottom: 8 })
             .backgroundColor(this.blockedAsQuestionAuthor ? '#FCEBEB' : ThemeColors.cardBackground(this.oledBlack, this.isDark))
             .border({ width: 1, color: this.blockedAsQuestionAuthor ? '#E24B4A' : $r('app.color.card_border') })
-            .borderRadius(18)
+            .borderRadius(this.pillRadius)
             .onClick(() => { this.doToggleQuestionAuthorBlock(); })
         }
         .width('100%').padding({ top: 4 })
       }
     }
-    .width('100%').padding(16).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
-    .borderRadius(16).border({ width: 1, color: $r('app.color.card_border') })
+    .width('100%').padding(this.cardPadding).backgroundColor(ThemeColors.cardBackground(this.oledBlack, this.isDark))
+    .borderRadius(this.cardRadius).border({ width: 1, color: $r('app.color.card_border') })
   }
 
   @Builder
   private StatItem(label: string, value: number, tabIndex: number): void {
     Column({ space: 2 }) {
       Text(`${value}`)
-        .fontSize(16).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
+        .fontSize(this.fontBody).fontWeight(FontWeight.Bold).fontColor($r('app.color.text_primary'))
       Text(label)
-        .fontSize(12).fontColor($r('app.color.text_secondary'))
+        .fontSize(this.fontCaption).fontColor($r('app.color.text_secondary'))
     }
     .alignItems(HorizontalAlign.Center)
     .layoutWeight(1)
@@ -1283,77 +1351,169 @@ struct People {
   private AnswersSortBar(): void {
     Row({ space: 8 }) {
       Text('按热度')
-        .fontSize(13)
+        .fontSize(this.fontMeta)
         .fontColor(this.answersSort === 'voteups' ? $r('app.color.action_text') : $r('app.color.text_secondary'))
         .padding({ left: 16, right: 16, top: 8, bottom: 8 })
         .backgroundColor(this.answersSort === 'voteups' ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
-        .borderRadius(16)
+        .borderRadius(this.cardRadius)
         .onClick(() => { this.answersSort = 'voteups'; this.loadAnswers(false); })
       Text('按时间')
-        .fontSize(13)
+        .fontSize(this.fontMeta)
         .fontColor(this.answersSort === 'created' ? $r('app.color.action_text') : $r('app.color.text_secondary'))
         .padding({ left: 16, right: 16, top: 8, bottom: 8 })
         .backgroundColor(this.answersSort === 'created' ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
-        .borderRadius(16)
+        .borderRadius(this.cardRadius)
         .onClick(() => { this.answersSort = 'created'; this.loadAnswers(false); })
     }
-    .width('100%').padding({ left: 16, right: 16, top: 8, bottom: 4 })
+    .width('100%').padding({ left: 16, right: 16, top: 0, bottom: 4 })
   }
 
   @Builder
   private ArticlesSortBar(): void {
     Row({ space: 8 }) {
       Text('按热度')
-        .fontSize(13)
+        .fontSize(this.fontMeta)
         .fontColor(this.articlesSort === 'voteups' ? $r('app.color.action_text') : $r('app.color.text_secondary'))
         .padding({ left: 16, right: 16, top: 8, bottom: 8 })
         .backgroundColor(this.articlesSort === 'voteups' ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
-        .borderRadius(16)
+        .borderRadius(this.cardRadius)
         .onClick(() => { this.articlesSort = 'voteups'; this.loadArticles(false); })
       Text('按时间')
-        .fontSize(13)
+        .fontSize(this.fontMeta)
         .fontColor(this.articlesSort === 'created' ? $r('app.color.action_text') : $r('app.color.text_secondary'))
         .padding({ left: 16, right: 16, top: 8, bottom: 8 })
         .backgroundColor(this.articlesSort === 'created' ? $r('app.color.action_background') : ThemeColors.cardBackground(this.oledBlack, this.isDark))
-        .borderRadius(16)
+        .borderRadius(this.cardRadius)
         .onClick(() => { this.articlesSort = 'created'; this.loadArticles(false); })
     }
-    .width('100%').padding({ left: 16, right: 16, top: 8, bottom: 4 })
+    .width('100%').padding({ left: 16, right: 16, top: 0, bottom: 4 })
   }
 
   build() {
     Column() {
-      // 个人卡片（头像/统计/按钮）：折叠时高度归零而非 Visibility.None，避免 Tabs 布局受影响
-      Column() {
-        this.ProfileHeader()
-      }
-      .padding({ left: 16, right: 16, top: this.topSafeAreaVp + 12 })
-      .height(this.profileHeaderVisible ? 'auto' : 0)
-      .clip(true)
+      Stack({ alignContent: Alignment.Top }) {
+        // 底层：Tabs（各列表正常滚动；隐藏原生 Tab 栏，改用独立吸顶 Tab 栏）
+        Tabs({ controller: this.peopleTabsController, barPosition: BarPosition.Start, index: this.logicalToTabsIndex(this.selectedTab) }) {
+          ForEach(this.visibleTabIndices(), (logical: number) => {
+            TabContent() {
+              Column() {
+                this.TabContentBody(logical)
+              }
+              .width('100%')
+              .height('100%')
+              // 顶部让位由各列表首部的 ProfileTopSpacer 完成（随内容滚动），
+              // 这里不能加固定 padding：会把列表视口钉在下方，产生滚动死区。
+            }.tabBar(this.TabLabel(logical))
+          }, (logical: number) => `${logical}`)
+        }
+        .barMode(BarMode.Scrollable)
+        .barHeight(0)
+        .width('100%')
+        .height('100%')
+        .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+        .onChange((index: number) => {
+          const logical = this.tabsIndexToLogical(index);
+          this.selectedTab = logical;
+          this.ensureTabLoaded(logical);
+          // 切 tab 时按新列表的滚动位置复位顶栏收起量，避免错乱
+          const sc = this.scrollerForTab(logical);
+          this.headerOffset = Math.min(Math.max(0, sc.currentOffset().yOffset), this.headerHeight());
+        })
 
-      Tabs({ controller: this.peopleTabsController, barPosition: BarPosition.Start, index: this.logicalToTabsIndex(this.selectedTab) }) {
-        ForEach(this.visibleTabIndices(), (logical: number) => {
-          TabContent() {
-            this.TabContentBody(logical)
-          }.tabBar(this.TabLabel(logical))
-        }, (logical: number) => `${logical}`)
+        // 独立吸顶 Tab 栏：浮在列表之上、名片之下；随名片收起上移，到顶后吸顶常驻。
+        // 高度编译期固定（状态栏避让 + 常量），不走测量，避免与 TabContent padding 形成测量环。
+        Scroll() {
+          Row({ space: 0 }) {
+            ForEach(this.visibleTabIndices(), (logical: number) => {
+              Text(this.tabTitles[logical])
+                .fontSize(this.fontBody)
+                .fontWeight(this.selectedTab === logical ? FontWeight.Bold : FontWeight.Normal)
+                .fontColor(this.selectedTab === logical ? $r('app.color.action_text') : $r('app.color.text_secondary'))
+                .padding({ left: 14, right: 14, top: 12, bottom: 12 })
+                .onClick(() => {
+                  this.selectedTab = logical;
+                  this.ensureTabLoaded(logical);
+                  this.peopleTabsController.changeIndex(this.logicalToTabsIndex(logical));
+                })
+            }, (logical: number) => `${logical}`)
+          }
+          .height(PROFILE_TAB_BAR_CONTENT_HEIGHT)
+          .align(Alignment.Center)
+        }
+        .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Off)
+        .width('100%')
+        .height(this.topSafeAreaVp + PROFILE_TAB_BAR_CONTENT_HEIGHT)
+        .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+        .border({ width: { bottom: 1 }, color: $r('app.color.card_border') })
+        .padding({ top: this.topSafeAreaVp })
+        // 初始位置 = 名片底沿（浮层头总高），但要扣掉栏内已自带的状态栏避让 padding，
+        // 否则初始态切换栏和名片之间多出一个状态栏高度的空隙；
+        // 收起量抵消后自然钉到屏幕顶（栏内自带状态栏避让）。
+        .offset({ y: Math.max(0, this.headerHeight() - this.topSafeAreaVp - this.headerOffset) })
+        .zIndex(1)
+
+        // 浮层排序条：仅回答/文章 tab 显示，与吸顶 Tab 栏一起滚动收起。
+        // 初始位置 = 名片底沿 + Tab 栏高；收起后钳制在 Tab 栏底沿
+        // （= 状态栏 + Tab 栏内容高），保证两行一起吸顶、不重叠盖住 Tab 栏。
+        if (this.selectedTab === 0 || this.selectedTab === 1) {
+          Column() {
+            if (this.selectedTab === 0) {
+              this.AnswersSortBar()
+            } else {
+              this.ArticlesSortBar()
+            }
+          }
+          .width('100%')
+          .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+          .offset({ y: Math.max(this.topSafeAreaVp + PROFILE_TAB_BAR_CONTENT_HEIGHT, this.headerHeight() + PROFILE_TAB_BAR_CONTENT_HEIGHT - this.headerOffset) })
+          .zIndex(1)
+          .onAreaChange((_oldValue: Area, newValue: Area) => {
+            const h = newValue.height as number;
+            if (h > 0) { this.sortBarHeight = h; }
+          })
+        }
+
+        // 浮层折叠顶栏：顶栏(返回键+昵称) + 名片整体，随列表滚动整体上移收起。
+        // 两块各自挂 onAreaChange 实测（唯一的测量点），总高显式锁定，
+        // 保证 Tab 栏的初始 offset（=总高）不会被浮层头盖住。
+        Column() {
+          Column() {
+            PageHeader({
+              title: this.profile?.name ?? '',
+              showBack: true
+            })
+          }
+          .width('100%')
+          .onAreaChange((_oldValue: Area, newValue: Area) => {
+            const h = newValue.height as number;
+            if (h > 0) { this.pageHeaderHeight = h; }
+          })
+
+          Column() {
+            this.ProfileHeader()
+          }
+          .width('100%')
+          .onAreaChange((_oldValue: Area, newValue: Area) => {
+            const h = newValue.height as number;
+            if (h > 0) { this.profileCardHeight = h; }
+          })
+        }
+        .width('100%')
+        .height(this.headerHeight())
+        .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+        .offset({ y: -this.headerOffset })
+        .clip(true)
+        .zIndex(2)
       }
-      .barMode(BarMode.Scrollable)
       .width('100%')
-      .layoutWeight(1)
-      .onChange((index: number) => {
-        const logical = this.tabsIndexToLogical(index);
-        this.selectedTab = logical;
-        this.ensureTabLoaded(logical);
-        // 切换 tab 后按新列表当前滚动位置复位个人卡片显隐
-        const y: number = this.scrollerForTab(logical).currentOffset().yOffset;
-        this.profileHeaderVisible = y <= 8;
-      })
+      .height('100%')
+      .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
+      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
     }
     .width('100%')
     .height('100%')
     .backgroundColor(ThemeColors.feedBackground(this.oledBlack, this.isDark))
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 
   private visibleTabIndices(): number[] {
@@ -1372,15 +1532,13 @@ struct People {
     return idx >= 0 ? idx : 0;
   }
 
-  // 列表滚动回调：用 ListScroller 绝对偏移判断（onScroll 的参数是每帧增量，不能用于阈值判断）
-  // 到顶附近（yOffset<=8）显示个人卡片；下滚即隐藏；中间上滚不触发（只有回到顶部才重现）
+  // 折叠顶栏：读绝对滚动偏移驱动浮层 Header 整体上移收起（纯视觉、不改列表布局，
+  // 规避之前二段式折叠的耦合死锁/滞后/重影）。headerOffset 0=全展开，=headerHeight 时整块收完。
   private makeProfileScrollHandler(scroller: ListScroller): (offset: number, state: ScrollState) => void {
     return (_delta: number, _state: ScrollState): void => {
-      const y: number = scroller.currentOffset().yOffset;
-      const shouldShow: boolean = y <= 8;
-      if (shouldShow !== this.profileHeaderVisible) {
-        this.profileHeaderVisible = shouldShow;
-      }
+      // 读绝对偏移驱动浮层顶栏整体收起（纯视觉、不改列表布局，规避折叠耦合）
+      const y = scroller.currentOffset().yOffset;
+      this.headerOffset = Math.min(Math.max(0, y), this.headerHeight());
     };
   }
 
@@ -1424,7 +1582,7 @@ struct People {
   @Builder
   private TabLabel(index: number): void {
     Text(this.tabTitles[index])
-      .fontSize(15)
+      .fontSize(this.fontBody)
       .fontWeight(this.selectedTab === index ? FontWeight.Bold : FontWeight.Normal)
       .fontColor(this.selectedTab === index ? $r('app.color.action_text') : $r('app.color.text_secondary'))
       .padding({ left: 14, right: 14, top: 12, bottom: 12 })
